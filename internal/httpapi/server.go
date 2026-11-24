@@ -196,7 +196,7 @@ func (s *server) admin(write bool, next http.HandlerFunc) http.HandlerFunc {
 			fail(w, 401, "UNAUTHORIZED")
 			return
 		}
-		if write && (!sameOrigin(r) || subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(v.CSRF)) != 1) {
+		if write && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(v.CSRF)) != 1 {
 			fail(w, 403, "FORBIDDEN")
 			return
 		}
@@ -215,10 +215,6 @@ func (s *server) cookie(w http.ResponseWriter, r *http.Request, value string, ag
 	}
 }
 func (s *server) login(w http.ResponseWriter, r *http.Request) {
-	if !sameOrigin(r) {
-		fail(w, 403, "FORBIDDEN")
-		return
-	}
 	if !s.allowed(r, "login", 6) {
 		fail(w, 429, "RATE_LIMITED")
 		return

@@ -14,7 +14,7 @@ import (
 	"testing"
 )
 
-func TestAdminOriginCSRFAndSubscriptionETagRevocation(t *testing.T) {
+func TestAdminCSRFAndSubscriptionETagRevocation(t *testing.T) {
 	key := make([]byte, 32)
 	rand.Read(key)
 	box, _ := secret.NewBox(key)
@@ -43,8 +43,14 @@ func TestAdminOriginCSRFAndSubscriptionETagRevocation(t *testing.T) {
 		return w
 	}
 	loginJSON, _ := json.Marshal(map[string]string{"username": "fixture", "password": password})
-	if w := call("POST", "/api/v1/admin/login", string(loginJSON), nil, "", "https://evil.example"); w.Code != 403 {
-		t.Fatal("foreign origin login accepted", w.Code)
+	if w := call("POST", "/api/v1/admin/login", `{"username":"fixture","password":"wrong"}`, nil, "", ""); w.Code != 401 {
+		t.Fatal("invalid credentials accepted without Origin", w.Code)
+	}
+	if w := call("POST", "/api/v1/admin/login", string(loginJSON), nil, "", ""); w.Code != 200 {
+		t.Fatal("missing Origin unexpectedly restricted login", w.Code)
+	}
+	if w := call("POST", "/api/v1/admin/login", string(loginJSON), nil, "", "https://other.example"); w.Code != 200 {
+		t.Fatal("Origin unexpectedly restricted login", w.Code)
 	}
 	login := call("POST", "/api/v1/admin/login", string(loginJSON), nil, "", "https://hub.example.com")
 	if login.Code != 200 {

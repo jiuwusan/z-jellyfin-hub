@@ -6,21 +6,20 @@ import (
 	"strings"
 )
 
-// No host allowlist and no trust in Forwarded/X-Forwarded-* headers.
-func sameOrigin(r *http.Request) bool {
-	if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
-		return false
-	}
-	u, e := url.Parse(r.Header.Get("Origin"))
-	return e == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" && u.User == nil && u.Path == "" && u.RawQuery == "" && u.Fragment == "" && strings.EqualFold(u.Host, r.Host) && (r.TLS == nil || u.Scheme == "https")
-}
-
+// Origin is only a browser scheme hint for cookies behind TLS termination, not
+// an authorization check. Host rewrites and absent Origin must not block access.
+// Forwarded headers are not trusted. Without a valid Origin, an existing Secure
+// cookie preserves HTTPS cookie attributes when logging out or changing password.
 func secureRequest(r *http.Request) bool {
 	if r.TLS != nil {
 		return true
 	}
 	u, e := url.Parse(r.Header.Get("Origin"))
-	return e == nil && u.Scheme == "https" && sameOrigin(r)
+	if e == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Hostname() != "" && u.User == nil && u.Path == "" && !u.ForceQuery && u.RawQuery == "" && u.Fragment == "" {
+		return u.Scheme == "https"
+	}
+	cookie, err := r.Cookie(httpsSessionCookie)
+	return err == nil && cookie.Value != ""
 }
 
 // A reverse proxy may keep or strip the deployment prefix. The browser owns its base URL.

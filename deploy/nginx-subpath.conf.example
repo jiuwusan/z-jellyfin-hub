@@ -8,11 +8,12 @@ location = /media-config {
 location /media-config/ {
     # Trailing slash strips this location prefix before proxying.
     proxy_pass http://z-jellyfin-hub:8097/;
-    proxy_set_header Host $http_host;
+    proxy_set_header Host $host;
     proxy_set_header Authorization $http_authorization;
 }
 
 # To KEEP the prefix instead, replace proxy_pass above with:
 # proxy_pass http://z-jellyfin-hub:8097;
 # Both forms are supported. No SPA try_files or sub_filter is required.
-# Preserve the public Host including its port for same-origin/CSRF checks.
+# Host may omit the public port; Hub writes still require session + CSRF token.
+# No additional X-Forwarded-* headers are required for browser HTTPS login.

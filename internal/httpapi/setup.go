@@ -20,10 +20,6 @@ func (s *server) setupStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) setup(w http.ResponseWriter, r *http.Request) {
-	if !sameOrigin(r) {
-		fail(w, 403, "FORBIDDEN")
-		return
-	}
 	if !s.allowed(r, "setup", 6) {
 		fail(w, 429, "RATE_LIMITED")
 		return

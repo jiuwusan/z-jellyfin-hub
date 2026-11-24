@@ -26,13 +26,15 @@ docker compose exec hub hub setup-code
 
 后台采用 Vue Router hash 路由，例如 `/media-config/#/subscriptions`、`/tools/video/control/#/policies`；`#` 前是部署物理路径，`#` 后仅用于页面导航。没有写死 `/hub/` 或其他部署前缀，支持根目录、任意多级目录及 `index.html` 入口。API/静态资源/订阅链接只按物理路径推导，不携带页面 hash。
 
-前缀可由反代保留或剥离，目录入口以 `/` 结尾；无末尾斜杠时应由外部入口规范化。HTTPS 入口必须保留原 Host（含端口）、Origin、Authorization 和 ETag。服务不从 X-Forwarded-Host/Forwarded 推导公开链接，也不因为转发头跳过 CSRF。
+前缀可由反代保留或剥离，目录入口以 `/` 结尾；无末尾斜杠时应由外部入口规范化。允许反代使用 `proxy_set_header Host $host;`，不要求 Host 携带外部端口，不需要新增 X-Forwarded-Host/X-Forwarded-Proto。保留浏览器 Origin 以辅助判断 HTTPS Cookie 属性，订阅请求的 Authorization 和 ETag/条件请求头按原规则传递。服务不从转发头推导公开链接，也不因为转发头跳过 CSRF。
 
 可参考 [Nginx 子目录示例](../../deploy/nginx-subpath.conf.example)，放入已有 `server {}` 内并将 `/media-config/` 替换为期望前缀。`proxy_pass http://z-jellyfin-hub:8097/;` 剥离前缀，去掉末尾 `/` 则保留前缀，两种均支持。不需要针对 hash 页面配置 `try_files` 或 `sub_filter`。示例只供审阅，本轮不修改现有 Nginx。
 
 刷新、浏览器前进/后退和订阅详情直达保留对应路由；未登录时先登录，再回到原目标。切页后旧页面响应不会跳回或弹出已离开页面的链接；登录初始化、退出和改密属于会话操作，不能因切页丢弃其状态更新。
 
-写操作校验请求 Host 与 Origin 的主机/端口匹配，并检查 CSRF Token；浏览器 HTTPS 使用独立的 __Host-hub_session Secure Cookie，HTTP 使用 hub_session_http，避免同域不同协议/端口的 Cookie 覆盖冲突。访问不同域名需分别登录。入口如更改 Host 而不保留原值，会导致同源校验失败，应修正代理请求头，不能通过固定公网地址环境变量修补。
+后台不再按 Origin/Host 匹配或 Sec-Fetch-Site 拒绝请求，缺失 Origin 也允许登录；管理写操作仍必须同时具有有效会话和匹配的 X-CSRF-Token。初始化仍验证一次性码，登录验证账号密码且保留限流。Hub 不新增跨域允许响应头；移除 Origin 限制不等于启用浏览器跨域访问，也不表示现有 Nginx 自动承担来源校验。
+
+Cookie 保持 HttpOnly、SameSite=Strict、Path=/、无 Domain。直连 TLS 始终使用 __Host-hub_session Secure Cookie；内部 HTTP 转发时，合法 HTTP(S) Origin 仅作为协议提示：HTTPS 使用 Secure Cookie，HTTP 使用独立 hub_session_http。Origin 不用于授权，不要求与 Host 相同。缺失或无效 Origin 时，若带有 HTTPS 会话 Cookie，则保持 Secure 属性以便退出/改密清理，否则按 HTTP 处理；首次通过 TLS 反代登录的非浏览器客户端若不提供 Origin，Hub 无法凭内部 HTTP 连接识别外部 HTTPS。不信任 Forwarded/X-Forwarded-*。HTTP/HTTPS Cookie 名称不同，避免相互覆盖；HTTPS 退出/改密同时清理 HTTP Cookie，退出撤销请求携带的会话，改密撤销全部会话。访问不同域名需分别登录。
 
 创建或轮换订阅时，API 仅返回相对路径，浏览器用当前页面地址生成完整链接。因此应从手机能到达的 HTTPS 地址打开后台后复制。HTTP 或仅内网可达地址仍可管理，但生成的链接不能直接用于要求 HTTPS 的 Android；页面会提示，不阻止操作。复制后更换后台访问地址不会自动改变已经发给手机的链接。
 

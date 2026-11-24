@@ -42,13 +42,10 @@ func TestFirstRunSetupRequiresCodeAndCannotReplaceAdministrator(t *testing.T) {
 	if w := call("status", "", ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"required":true`) {
 		t.Fatal("first-run status missing", w.Code)
 	}
-	if call("complete", "https://evil.example", code).Code != 403 {
-		t.Fatal("foreign setup accepted")
-	}
-	if call("complete", "http://192.0.2.5:8080", "wrong").Code != 401 {
+	if call("complete", "https://other.example:9443", "wrong").Code != 401 {
 		t.Fatal("invalid setup code accepted")
 	}
-	if w := call("complete", "http://192.0.2.5:8080", code); w.Code != 200 {
+	if w := call("complete", "", code); w.Code != 200 {
 		t.Fatal("valid setup rejected", w.Code)
 	}
 	if call("complete", "http://192.0.2.5:8080", code).Code != 409 {
