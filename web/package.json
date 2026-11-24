@@ -1,0 +1,20 @@
+{
+  "name": "z-jellyfin-hub-admin",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "typecheck": "vue-tsc --noEmit",
+    "build": "vue-tsc --noEmit && vite build"
+  },
+  "dependencies": {
+    "vue": "3.5.46"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "6.0.11",
+    "typescript": "5.9.3",
+    "vite": "8.3.8",
+    "vue-tsc": "3.3.14"
+  }
+}

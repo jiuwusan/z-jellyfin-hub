@@ -1,0 +1,68 @@
+name: Check and publish Docker image
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build admin UI
+        working-directory: web
+        run: npm ci --no-audit --no-fund && npm run build
+      - name: Check Go formatting, tests and vet
+        run: |
+          test -z "$(gofmt -l cmd internal)"
+          go vet ./...
+          go test -race ./...
+      - name: Validate Compose
+        env:
+          HUB_PUBLIC_URL: https://hub.example.com
+        run: |
+          mkdir -p secrets
+          touch secrets/hub.key secrets/admin.password
+          docker compose config --quiet
+
+  publish:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          username: jiuwusan
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            jiuwusan/z-jellyfin-hub:latest
+            jiuwusan/z-jellyfin-hub:sha-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

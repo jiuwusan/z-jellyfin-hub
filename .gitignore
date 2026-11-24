@@ -28,6 +28,17 @@ go.work.sum
 
 # env file
 .env
+secrets/
+data/
+verification/
+.scratch/
+dist/
+web/node_modules/
+internal/httpapi/webassets/dist/
+*.db
+*.db-wal
+*.db-shm
+*.apk
 
 # Editor/IDE
 # .idea/

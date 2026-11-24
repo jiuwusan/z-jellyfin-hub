@@ -1,0 +1,12 @@
+.git
+.env
+secrets
+data
+verification
+.scratch
+web/node_modules
+internal/httpapi/webassets/dist
+*.db
+*.db-wal
+*.db-shm
+*.exe
