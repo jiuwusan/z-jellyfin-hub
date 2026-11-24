@@ -77,9 +77,9 @@ func TestAdminOriginCSRFAndSubscriptionETagRevocation(t *testing.T) {
 	preview, _ := svc.Preview(sub.ID)
 	svc.Publish(sub.ID, 0, preview.DraftDigest, "")
 	get := func(tag, token string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest("GET", "/api/v1/subscriptions/"+sub.ID+"/config", nil)
+		r := httptest.NewRequest("GET", "/api/v1/subscription/config", nil)
 		r.Header.Set("Authorization", "Bearer "+token)
-		r.Header.Set("X-Client-Version-Code", "56")
+		r.Header.Set("X-Client-Version-Code", "57")
 		r.Header.Set("If-None-Match", tag)
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)

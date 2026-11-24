@@ -33,6 +33,7 @@ type Policy struct {
 }
 type Configuration struct {
 	SchemaVersion          int        `json:"schemaVersion"`
+	ServerInstanceID       string     `json:"serverInstanceId"`
 	SubscriptionID         string     `json:"subscriptionId"`
 	Revision               int64      `json:"revision"`
 	MinClientVersionCode   int        `json:"minClientVersionCode"`
@@ -71,7 +72,7 @@ func (p Policy) Validate() error {
 	return nil
 }
 func (c Configuration) Validate() error {
-	if c.SchemaVersion != 1 || c.SubscriptionID == "" || c.Revision < 1 || c.MinClientVersionCode < 1 || c.RefreshIntervalSeconds < 300 || c.RefreshIntervalSeconds > 86400 {
+	if c.SchemaVersion != 2 || len(c.ServerInstanceID) != 32 || strings.Trim(c.ServerInstanceID, "0123456789abcdef") != "" || c.SubscriptionID == "" || c.Revision < 1 || c.MinClientVersionCode < 1 || c.RefreshIntervalSeconds < 300 || c.RefreshIntervalSeconds > 86400 {
 		return ErrInvalid
 	}
 	if !ValidBaseURL(c.Connection.Jellyfin.BaseURL) || strings.TrimSpace(c.Connection.Jellyfin.Username) == "" || c.Connection.Jellyfin.Password == "" || len(c.Connection.Jellyfin.Password) > 1024 {

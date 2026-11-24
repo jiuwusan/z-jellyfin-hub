@@ -1,6 +1,6 @@
 # z-jellyfin-hub
 
-家庭影音配置与个人订阅管理服务。Go + Vue 3/TypeScript + SQLite，管理代理、Jellyfin 授权和画质策略；手机只需订阅链接。Hub 不中转视频，不覆盖字幕、音轨偏好。
+家庭影音配置与个人订阅管理服务。Go + Vue 3/TypeScript + SQLite，管理代理、Jellyfin 授权和画质策略；手机只需订阅链接。链接不含订阅 ID，支持指定/恢复原令牌；数据库重建后由实例标识处理版本恢复。Hub 不中转视频，不覆盖字幕、音轨偏好。
 
 - [技术方案](docs/requirements/技术方案.md)
 - [开发规范](docs/standards/开发规范.md)

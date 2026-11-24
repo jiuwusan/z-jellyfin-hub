@@ -7,7 +7,7 @@ import (
 )
 
 func TestDocumentedConfigurationExample(t *testing.T) {
-	raw, err := os.ReadFile("../../docs/api/subscription-v1.example.json")
+	raw, err := os.ReadFile("../../docs/api/subscription-v2.example.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,7 +21,7 @@ func TestDocumentedConfigurationExample(t *testing.T) {
 }
 
 func TestConfigurationValidation(t *testing.T) {
-	c := Configuration{SchemaVersion: 1, SubscriptionID: "fixture", Revision: 1, MinClientVersionCode: 56, RefreshIntervalSeconds: 900,
+	c := Configuration{SchemaVersion: 2, ServerInstanceID: "11111111111111111111111111111111", SubscriptionID: "fixture", Revision: 1, MinClientVersionCode: 56, RefreshIntervalSeconds: 900,
 		Connection: Connection{Proxy: Proxy{Type: "http", Host: "proxy.example.com", Port: 8080}, Jellyfin: Jellyfin{BaseURL: "http://media.internal:8096/jellyfin", Username: "fixture", Password: "fixture-only"}}, Playback: Policy{Resolution: "1080p", TotalBitrateBPS: 4000000}}
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)

@@ -132,6 +132,9 @@ func (s *Service) DeleteEntity(kind, id string) error {
 	return s.Store.DeleteEntity(kind, id)
 }
 func (s *Service) SaveSubscription(v storage.Subscription) (storage.Subscription, string, error) {
+	return s.SaveSubscriptionWithToken(v, "")
+}
+func (s *Service) SaveSubscriptionWithToken(v storage.Subscription, specified string) (storage.Subscription, string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !validLabel(v.Label) {
@@ -141,20 +144,29 @@ func (s *Service) SaveSubscription(v storage.Subscription) (storage.Subscription
 		v.RefreshIntervalSeconds = 900
 	}
 	if v.MinClientVersionCode == 0 {
-		v.MinClientVersionCode = 56
+		v.MinClientVersionCode = 57
 	}
 	token := ""
 	if v.ID == "" {
 		v.ID = ID()
 		v.Enabled = true
 		var e error
-		token, e = secret.Token()
+		token = specified
+		if token == "" {
+			token, e = secret.Token()
+		}
 		if e != nil {
 			return v, "", e
 		}
-		v.TokenHash, _ = secret.Digest(token)
+		v.TokenHash, e = secret.Digest(token)
+		if e != nil {
+			return v, "", domain.ErrInvalid
+		}
 		v.Revision = 0
 	} else {
+		if specified != "" {
+			return v, "", domain.ErrInvalid
+		}
 		old, e := s.Store.Subscription(v.ID)
 		if e != nil {
 			return v, "", e
@@ -171,29 +183,49 @@ func (s *Service) SaveSubscription(v storage.Subscription) (storage.Subscription
 	}
 	link := ""
 	if token != "" {
-		link = s.link(v.ID, token)
+		link = s.link(token)
 	}
 	return v, link, nil
 }
-func (s *Service) link(id, token string) string {
-	return "api/v1/subscriptions/" + id + "/config#" + token
+func (s *Service) link(token string) string {
+	return "api/v1/subscription/config#" + token
 }
-func (s *Service) Rotate(id string) (string, error) {
+func (s *Service) Rotate(id string) (string, error) { return s.SetToken(id, "") }
+func (s *Service) SetToken(id, token string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	v, e := s.Store.Subscription(id)
+	if _, e := s.Store.Subscription(id); e != nil {
+		return "", e
+	}
+	var e error
+	if token == "" {
+		token, e = secret.Token()
+		if e != nil {
+			return "", e
+		}
+	}
+	digest, e := secret.Digest(token)
 	if e != nil {
+		return "", domain.ErrInvalid
+	}
+	if e = s.Store.SetToken(id, digest); e != nil {
 		return "", e
 	}
-	token, e := secret.Token()
+	return s.link(token), nil
+}
+func (s *Service) AuthenticateToken(token string) (storage.Subscription, error) {
+	digest, e := secret.Digest(token)
 	if e != nil {
-		return "", e
+		return storage.Subscription{}, ErrUnauthorized
 	}
-	v.TokenHash, _ = secret.Digest(token)
-	if e = s.Store.SaveSubscription(v); e != nil {
-		return "", e
+	v, e := s.Store.SubscriptionByToken(digest)
+	if e != nil || !secret.Matches(v.TokenHash, token) {
+		return storage.Subscription{}, ErrUnauthorized
 	}
-	return s.link(id, token), nil
+	if !v.Enabled {
+		return v, ErrDisabled
+	}
+	return v, nil
 }
 func (s *Service) SetEnabled(id string, enabled bool) error {
 	s.mu.Lock()
@@ -211,7 +243,7 @@ func (s *Service) DeleteSubscription(id string) error {
 	return s.Store.DeleteSubscription(id)
 }
 func (s *Service) build(v storage.Subscription) (domain.Configuration, error) {
-	c := domain.Configuration{SchemaVersion: 1, SubscriptionID: v.ID, Revision: v.Revision + 1, MinClientVersionCode: v.MinClientVersionCode, RefreshIntervalSeconds: v.RefreshIntervalSeconds}
+	c := domain.Configuration{SchemaVersion: 2, ServerInstanceID: s.Store.InstanceID(), SubscriptionID: v.ID, Revision: v.Revision + 1, MinClientVersionCode: max(57, v.MinClientVersionCode), RefreshIntervalSeconds: v.RefreshIntervalSeconds}
 	entity, e := s.Store.Entity("proxy", v.ProxyID)
 	if e != nil {
 		return c, domain.ErrInvalid
@@ -304,6 +336,9 @@ func (s *Service) Rollback(id string, revision, expected int64) (int64, error) {
 	if e = json.Unmarshal(raw, &c); e != nil {
 		return 0, e
 	}
+	c.SchemaVersion = 2
+	c.ServerInstanceID = s.Store.InstanceID()
+	c.MinClientVersionCode = max(57, c.MinClientVersionCode)
 	c.Revision = expected + 1
 	if c.SubscriptionID != id || c.Validate() != nil {
 		return 0, domain.ErrInvalid
@@ -337,6 +372,9 @@ func (s *Service) Current(id, token string, version int) (domain.Configuration, 
 	if e = json.Unmarshal(raw, &c); e != nil {
 		return c, e
 	}
+	c.SchemaVersion = 2
+	c.ServerInstanceID = s.Store.InstanceID()
+	c.MinClientVersionCode = max(57, c.MinClientVersionCode)
 	if e = c.Validate(); e != nil {
 		return c, e
 	}

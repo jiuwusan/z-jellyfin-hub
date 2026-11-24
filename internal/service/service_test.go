@@ -37,14 +37,14 @@ func fixture(t *testing.T) (*Service, storage.Subscription, string) {
 
 func TestSubscriptionLinkIsRelative(t *testing.T) {
 	_, _, link := fixture(t)
-	if !strings.HasPrefix(link, "api/v1/subscriptions/") {
+	if !strings.HasPrefix(link, "api/v1/subscription/config#") {
 		t.Fatal("link depends on fixed public URL")
 	}
 }
 func TestDraftPublishRollbackAndRevocation(t *testing.T) {
 	s, sub, link := fixture(t)
 	token := link[len(link)-43:]
-	if _, e := s.Current(sub.ID, token, 56); e != ErrNotPublished {
+	if _, e := s.Current(sub.ID, token, 57); e != ErrNotPublished {
 		t.Fatal("unpublished subscription delivered", e)
 	}
 	preview, e := s.Preview(sub.ID)
@@ -54,12 +54,12 @@ func TestDraftPublishRollbackAndRevocation(t *testing.T) {
 	if _, e = s.Publish(sub.ID, preview.ExpectedRevision, preview.DraftDigest, "first"); e != nil {
 		t.Fatal(e)
 	}
-	first, e := s.Current(sub.ID, token, 56)
+	first, e := s.Current(sub.ID, token, 57)
 	if e != nil || first.Playback.TotalBitrateBPS != 4000000 {
 		t.Fatal("publish failed", e)
 	}
 	s.SaveEntity("policy", sub.PolicyID, "Policy", json.RawMessage(`{"resolution":"720p","totalBitrateBps":3000000}`))
-	still, _ := s.Current(sub.ID, token, 56)
+	still, _ := s.Current(sub.ID, token, 57)
 	if still.Playback.TotalBitrateBPS != 4000000 {
 		t.Fatal("draft leaked to published config")
 	}
@@ -71,19 +71,19 @@ func TestDraftPublishRollbackAndRevocation(t *testing.T) {
 	if _, e = s.Rollback(sub.ID, 1, 2); e != nil {
 		t.Fatal(e)
 	}
-	current, _ := s.Current(sub.ID, token, 56)
+	current, _ := s.Current(sub.ID, token, 57)
 	if current.Revision != 3 || current.Playback.TotalBitrateBPS != 4000000 {
 		t.Fatal("rollback did not create higher revision")
 	}
 	s.SetEnabled(sub.ID, false)
-	if _, e = s.Current(sub.ID, token, 56); e != ErrDisabled {
+	if _, e = s.Current(sub.ID, token, 57); e != ErrDisabled {
 		t.Fatal("disabled subscription still usable")
 	}
 	s.SetEnabled(sub.ID, true)
 	if _, e = s.Rotate(sub.ID); e != nil {
 		t.Fatal(e)
 	}
-	if _, e = s.Current(sub.ID, token, 56); e != ErrUnauthorized {
+	if _, e = s.Current(sub.ID, token, 57); e != ErrUnauthorized {
 		t.Fatal("old token still usable")
 	}
 }

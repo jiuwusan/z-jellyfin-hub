@@ -50,3 +50,11 @@ docker compose exec hub hub backup --output /data/backup-new.db
 先在 web 执行 npm ci、npm test 和 npm run build。Go 可选环境变量仅供路径/监听覆盖：HUB_LISTEN=127.0.0.1:8097、HUB_DATA_DIR 指向临时数据库目录、HUB_MASTER_KEY_FILE 指向独立临时密钥路径。执行 go run ./cmd/hub 即可进入引导；用相同路径执行 go run ./cmd/hub setup-code 获取一次性码。无需 HUB_PUBLIC_URL、HUB_ADMIN_USER 或 HUB_ADMIN_PASSWORD_FILE。
 
 本机无 Docker 时只验证本地二进制和 YAML，不能宣称容器或镜像发布已经通过。
+
+## 令牌恢复与服务重建
+
+固定订阅链接为 /api/v1/subscription/config#令牌，不含订阅 ID。创建时可指定原 43 位令牌；已有订阅可设置/恢复指定令牌或随机轮换。不同订阅不能绑定同一令牌，Hub 只存摘要，无法找回未备份的令牌。
+
+灾后流程：保持原手机可达 HTTPS 域名、端口和路径前缀；使用新数据目录/卷初始化 Hub，重建代理/服务/授权/策略；新建订阅时填原令牌，预览并发布。新库有新的 serverInstanceId，设备按既有刷新周期重新验证代理与登录，成功后接收新版本 1，无需重新输入链接；可在设备点立即同步加快检查。现有 Android 升级到 0.6.43 可自动迁移已有可信缓存中的旧链接。
+
+完整数据库备份保留原实例标识；如果还原的是落后于设备的旧快照，同实例防回退仍生效。此时应重新发布足够高的版本，或按新数据库+原令牌流程恢复；不能通过关闭版本保护强行接受旧配置。该功能不恢复已丢失的媒体代理/Jellyfin 密码，必须重建正确授权。

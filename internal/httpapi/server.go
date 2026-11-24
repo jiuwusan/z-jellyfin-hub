@@ -74,9 +74,10 @@ func New(svc *service.Service, options Options) http.Handler {
 	mux.HandleFunc("POST /api/v1/admin/subscriptions/{id}/publish", s.admin(true, s.publish))
 	mux.HandleFunc("POST /api/v1/admin/subscriptions/{id}/rollback", s.admin(true, s.rollback))
 	mux.HandleFunc("POST /api/v1/admin/subscriptions/{id}/rotate", s.admin(true, s.rotate))
+	mux.HandleFunc("POST /api/v1/admin/subscriptions/{id}/token", s.admin(true, s.setToken))
 	mux.HandleFunc("POST /api/v1/admin/subscriptions/{id}/state", s.admin(true, s.state))
-	mux.HandleFunc("GET /api/v1/subscriptions/{id}/config", s.configuration)
-	mux.HandleFunc("POST /api/v1/subscriptions/{id}/feedback", s.feedback)
+	mux.HandleFunc("GET /api/v1/subscription/config", s.configuration)
+	mux.HandleFunc("POST /api/v1/subscription/feedback", s.feedback)
 	mux.HandleFunc("/", s.static)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -93,7 +94,7 @@ func jsonResponse(w http.ResponseWriter, status int, value any) {
 	json.NewEncoder(w).Encode(value)
 }
 func fail(w http.ResponseWriter, status int, code string) {
-	messages := map[string]string{"UNAUTHORIZED": "认证无效，请重新登录或更新订阅", "FORBIDDEN": "请求校验失败", "CONFIG_INVALID": "配置不完整或包含不支持的值", "CONFLICT": "配置已变化，请刷新预览后重试", "REFERENCE_IN_USE": "配置仍被引用，不能删除", "NOT_FOUND": "记录不存在", "SUBSCRIPTION_DISABLED": "订阅已停用", "NOT_PUBLISHED": "订阅尚未发布", "CLIENT_TOO_OLD": "请更新客户端", "RATE_LIMITED": "操作过于频繁，请稍后重试", "INTERNAL": "服务暂时不可用", "UI_NOT_BUILT": "管理页面尚未构建"}
+	messages := map[string]string{"UNAUTHORIZED": "认证无效，请重新登录或更新订阅", "FORBIDDEN": "请求校验失败", "CONFIG_INVALID": "配置不完整或包含不支持的值", "CONFLICT": "配置已变化，请刷新预览后重试", "REFERENCE_IN_USE": "配置仍被引用，不能删除", "NOT_FOUND": "记录不存在", "SUBSCRIPTION_DISABLED": "订阅已停用", "NOT_PUBLISHED": "订阅尚未发布", "CLIENT_TOO_OLD": "请更新客户端", "RATE_LIMITED": "操作过于频繁，请稍后重试", "TOKEN_IN_USE": "令牌已绑定其他订阅，请使用不同令牌", "INTERNAL": "服务暂时不可用", "UI_NOT_BUILT": "管理页面尚未构建"}
 	jsonResponse(w, status, map[string]string{"code": code, "message": messages[code]})
 }
 func result(w http.ResponseWriter, value any, e error) {
@@ -112,6 +113,8 @@ func result(w http.ResponseWriter, value any, e error) {
 		fail(w, 426, "CLIENT_TOO_OLD")
 	case errors.Is(e, domain.ErrInvalid):
 		fail(w, 400, "CONFIG_INVALID")
+	case errors.Is(e, storage.ErrTokenInUse):
+		fail(w, 409, "TOKEN_IN_USE")
 	case errors.Is(e, storage.ErrConflict):
 		fail(w, 409, "CONFLICT")
 	case errors.Is(e, service.ErrReferenced):
@@ -327,16 +330,30 @@ func (s *server) subscriptions(w http.ResponseWriter, r *http.Request) {
 	result(w, v, e)
 }
 func (s *server) saveSubscription(w http.ResponseWriter, r *http.Request) {
-	var v storage.Subscription
+	var v struct {
+		storage.Subscription
+		Token string `json:"token"`
+	}
 	if !decode(w, r, &v) {
 		return
 	}
 	v.ID = r.PathValue("id")
-	saved, link, e := s.svc.SaveSubscription(v)
+	saved, link, e := s.svc.SaveSubscriptionWithToken(v.Subscription, v.Token)
 	result(w, map[string]any{"subscription": saved, "link": link}, e)
 }
 func (s *server) deleteSubscription(w http.ResponseWriter, r *http.Request) {
 	result(w, map[string]bool{"ok": true}, s.svc.DeleteSubscription(r.PathValue("id")))
+}
+
+func (s *server) setToken(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Token string `json:"token"`
+	}
+	if !decode(w, r, &input) {
+		return
+	}
+	link, e := s.svc.SetToken(r.PathValue("id"), input.Token)
+	result(w, map[string]string{"link": link}, e)
 }
 func (s *server) preview(w http.ResponseWriter, r *http.Request) {
 	v, e := s.svc.Preview(r.PathValue("id"))
@@ -403,12 +420,17 @@ func (s *server) configuration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	version, _ := strconv.Atoi(r.Header.Get("X-Client-Version-Code"))
-	c, e := s.svc.Current(r.PathValue("id"), bearer(r), version)
+	binding, e := s.svc.AuthenticateToken(bearer(r))
 	if e != nil {
 		result(w, nil, e)
 		return
 	}
-	tag := "\"" + c.SubscriptionID + "-" + strconv.FormatInt(c.Revision, 10) + "\""
+	c, e := s.svc.Current(binding.ID, bearer(r), version)
+	if e != nil {
+		result(w, nil, e)
+		return
+	}
+	tag := "\"" + c.ServerInstanceID + "-" + c.SubscriptionID + "-" + strconv.FormatInt(c.Revision, 10) + "\""
 	w.Header().Set("Cache-Control", "private, no-cache")
 	w.Header().Set("Vary", "Authorization, X-Client-Version-Code")
 	w.Header().Set("ETag", tag)
@@ -423,7 +445,8 @@ func (s *server) feedback(w http.ResponseWriter, r *http.Request) {
 		fail(w, 429, "RATE_LIMITED")
 		return
 	}
-	if _, e := s.svc.Authenticate(r.PathValue("id"), bearer(r)); e != nil {
+	binding, e := s.svc.AuthenticateToken(bearer(r))
+	if e != nil {
 		result(w, nil, e)
 		return
 	}
@@ -437,9 +460,9 @@ func (s *server) feedback(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "CONFIG_INVALID")
 		return
 	}
-	hash := sha256.Sum256([]byte(r.PathValue("id") + ":" + v.DeviceID))
+	hash := sha256.Sum256([]byte(binding.ID + ":" + v.DeviceID))
 	v.DeviceID = hex.EncodeToString(hash[:])
-	result(w, map[string]bool{"ok": true}, s.svc.Store.PutFeedback(r.PathValue("id"), v))
+	result(w, map[string]bool{"ok": true}, s.svc.Store.PutFeedback(binding.ID, v))
 }
 func (s *server) ready(w http.ResponseWriter, r *http.Request) {
 	if _, e := s.svc.Store.Metadata("key_check"); e != nil {

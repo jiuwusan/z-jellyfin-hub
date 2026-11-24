@@ -41,6 +41,51 @@ func TestConcurrentSetupHasOneWinner(t *testing.T) {
 	}
 }
 
+func TestInstanceIdentityPersistsAndSurvivesBackup(t *testing.T) {
+	key := make([]byte, 32)
+	rand.Read(key)
+	box, _ := secret.NewBox(key)
+	root := t.TempDir()
+	path := filepath.Join(root, "hub.db")
+	first, err := Open(path, box)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := first.InstanceID()
+	if len(identity) != 32 {
+		t.Fatal("instance identity missing")
+	}
+	backup := filepath.Join(root, "backup.db")
+	if err = first.Backup(backup); err != nil {
+		t.Fatal(err)
+	}
+	first.Close()
+	reopened, err := Open(path, box)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if reopened.InstanceID() != identity {
+		t.Fatal("restart changed instance")
+	}
+	restored, err := Open(backup, box)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	if restored.InstanceID() != identity {
+		t.Fatal("backup changed instance")
+	}
+	rebuilt, err := Open(filepath.Join(root, "rebuilt.db"), box)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rebuilt.Close()
+	if rebuilt.InstanceID() == identity {
+		t.Fatal("new database reused instance identity")
+	}
+}
+
 func TestEncryptedPersistenceAndAtomicVersions(t *testing.T) {
 	key := make([]byte, 32)
 	rand.Read(key)

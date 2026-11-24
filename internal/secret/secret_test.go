@@ -48,6 +48,11 @@ func TestTokenAndPasswordVerification(t *testing.T) {
 	if _, err = Digest("short"); err == nil {
 		t.Fatal("invalid token accepted")
 	}
+	for _, invalid := range []string{token[:10] + "\n" + token[10:], token + "\r\n", " " + token} {
+		if _, err = Digest(invalid); err == nil {
+			t.Fatal("noncanonical token accepted")
+		}
+	}
 	hash, err := HashPassword(token)
 	if err != nil {
 		t.Fatal(err)

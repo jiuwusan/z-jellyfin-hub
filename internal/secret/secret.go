@@ -52,8 +52,11 @@ func Token() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 func Digest(token string) ([]byte, error) {
+	if len(token) != 43 {
+		return nil, ErrInvalid
+	}
 	b, err := base64.RawURLEncoding.Strict().DecodeString(token)
-	if err != nil || len(b) != 32 {
+	if err != nil || len(b) != 32 || base64.RawURLEncoding.EncodeToString(b) != token {
 		return nil, ErrInvalid
 	}
 	hash := sha256.Sum256(b)

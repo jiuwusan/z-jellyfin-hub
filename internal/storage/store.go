@@ -1,21 +1,26 @@
 package storage
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/jiuwusan/z-jellyfin-hub/internal/secret"
 	_ "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 	"time"
 )
 
 var ErrConflict = errors.New("configuration changed; refresh before publishing")
+var ErrTokenInUse = errors.New("token is already bound to another subscription")
 
 type Store struct {
-	db  *sql.DB
-	box *secret.Box
+	db         *sql.DB
+	box        *secret.Box
+	instanceID string
 }
 
 // The transaction prevents concurrent setup requests from replacing the first administrator.
@@ -94,12 +99,62 @@ func Open(path string, box *secret.Box) (*Store, error) {
 		db.Close()
 		return nil, e
 	}
-	store := &Store{db, box}
+	store := &Store{db: db, box: box}
 	if err := store.checkKey(); err != nil {
 		db.Close()
 		return nil, err
 	}
+	if _, e = db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS subscriptions_token_unique ON subscriptions(token_hash)"); e != nil {
+		db.Close()
+		return nil, e
+	}
+	if _, e = store.Metadata("server_instance_id"); errors.Is(e, sql.ErrNoRows) {
+		identity := make([]byte, 16)
+		if _, e = rand.Read(identity); e != nil {
+			db.Close()
+			return nil, e
+		}
+		_, e = db.Exec("INSERT OR IGNORE INTO metadata(key,value) VALUES('server_instance_id',?)", hex.EncodeToString(identity))
+	}
+	if e != nil {
+		db.Close()
+		return nil, e
+	}
+	store.instanceID, e = store.Metadata("server_instance_id")
+	if e != nil {
+		db.Close()
+		return nil, e
+	}
 	return store, nil
+}
+
+func (s *Store) InstanceID() string { return s.instanceID }
+
+func tokenWriteError(err error) error {
+	var failure interface{ Code() int }
+	if errors.As(err, &failure) && failure.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE {
+		return ErrTokenInUse
+	}
+	return err
+}
+
+func (s *Store) SubscriptionByToken(hash []byte) (Subscription, error) {
+	return scanSub(s.db.QueryRow("SELECT "+subColumns+" FROM subscriptions WHERE token_hash=?", hash))
+}
+
+func (s *Store) SetToken(id string, hash []byte) error {
+	result, err := s.db.Exec("UPDATE subscriptions SET token_hash=? WHERE id=?", hash, id)
+	if err != nil {
+		return tokenWriteError(err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 func (s *Store) checkKey() error {
 	encoded, e := s.Metadata("key_check")
@@ -206,7 +261,7 @@ func (s *Store) DeleteEntity(kind, id string) error {
 }
 func (s *Store) SaveSubscription(v Subscription) error {
 	_, e := s.db.Exec(`INSERT INTO subscriptions(id,label,proxy_id,credential_id,policy_id,enabled,token_hash,revision,refresh_interval,min_client) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET label=excluded.label,proxy_id=excluded.proxy_id,credential_id=excluded.credential_id,policy_id=excluded.policy_id,enabled=excluded.enabled,token_hash=excluded.token_hash,refresh_interval=excluded.refresh_interval,min_client=excluded.min_client`, v.ID, v.Label, v.ProxyID, v.CredentialID, v.PolicyID, v.Enabled, v.TokenHash, v.Revision, v.RefreshIntervalSeconds, v.MinClientVersionCode)
-	return e
+	return tokenWriteError(e)
 }
 
 const subColumns = "id,label,proxy_id,credential_id,policy_id,enabled,token_hash,revision,refresh_interval,min_client"
