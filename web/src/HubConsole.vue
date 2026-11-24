@@ -21,7 +21,7 @@ const base=apiRoot+'admin'
 const starting=ref(true),bootFailed=ref(false),setupRequired=ref(false)
 const setup=reactive({code:'',username:'admin',password:'',confirmation:''})
 const csrf=ref(''),username=ref(''),authenticated=ref(false),busy=ref(false),error=ref(''),notice=ref('')
-const login=reactive({username:'admin',password:''}),tab=ref<Kind|'subscriptions'>('subscriptions')
+const login=reactive({username:'',password:''}),tab=ref<Kind|'subscriptions'>('subscriptions')
 const entities=reactive<Record<Kind,Entity[]>>({proxy:[],server:[],credential:[],policy:[]}),subscriptions=ref<Subscription[]>([])
 const entityDraft=ref<{id:string;label:string;data:Data;hasPassword:boolean}|null>(null)
 const subscriptionDraft=ref<Subscription|null>(null),selected=ref<Subscription|null>(null),preview=ref<Preview|null>(null),versions=ref<Version[]>([]),feedback=ref<Feedback[]>([]),link=ref('')
@@ -90,7 +90,7 @@ async function boot(){starting.value=true;bootFailed.value=false;error.value='';
 async function completeSetup(){await action(async()=>{
  if(setup.password!==setup.confirmation)throw new Error('两次密码输入不一致')
  await setupRequest('complete','POST',{code:setup.code,username:setup.username,password:setup.password})
- login.username=setup.username;setup.code='';setup.password='';setup.confirmation='';setupRequired.value=false;notice.value='初始化完成，请使用刚创建的账号登录。'
+ login.username='';setup.code='';setup.password='';setup.confirmation='';setupRequired.value=false;notice.value='初始化完成，请使用刚创建的账号登录。'
 })}
 onMounted(boot)
 </script>
