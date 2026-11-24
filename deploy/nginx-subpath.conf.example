@@ -1,0 +1,18 @@
+# Include these locations inside the existing server {} block.
+# /media-config/ is an EXAMPLE: replace it with any desired deployment prefix.
+# The frontend does not need rebuilding or a matching hard-coded base.
+location = /media-config {
+    return 308 /media-config/$is_args$args;
+}
+
+location /media-config/ {
+    # Trailing slash strips this location prefix before proxying.
+    proxy_pass http://z-jellyfin-hub:8097/;
+    proxy_set_header Host $http_host;
+    proxy_set_header Authorization $http_authorization;
+}
+
+# To KEEP the prefix instead, replace proxy_pass above with:
+# proxy_pass http://z-jellyfin-hub:8097;
+# Both forms are supported. No SPA try_files or sub_filter is required.
+# Preserve the public Host including its port for same-origin/CSRF checks.

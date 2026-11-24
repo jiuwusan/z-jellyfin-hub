@@ -26,17 +26,20 @@ func secureRequest(r *http.Request) bool {
 // A reverse proxy may keep or strip the deployment prefix. The browser owns its base URL.
 func routeRequest(r *http.Request) *http.Request {
 	path := r.URL.Path
-	for _, marker := range []string{"/api/v1/", "/assets/", "/health/"} {
-		if at := strings.Index(path, marker); at >= 0 {
-			path = path[at:]
-			break
-		}
-	}
-	if strings.HasSuffix(path, "/") && !strings.Contains(path, "/api/") {
+	if (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.HasSuffix(path, "/") {
 		path = "/"
-	}
-	if strings.HasSuffix(path, "/index.html") {
+	} else if strings.HasSuffix(path, "/index.html") {
 		path = "/index.html"
+	} else {
+		start := -1
+		for _, marker := range []string{"/api/v1/", "/assets/", "/health/"} {
+			if at := strings.LastIndex(path, marker); at > start {
+				start = at
+			}
+		}
+		if start >= 0 {
+			path = path[start:]
+		}
 	}
 	if path == r.URL.Path {
 		return r

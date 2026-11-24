@@ -70,3 +70,18 @@ func TestAnyAccessAddressWithSameOriginAndCSRF(t *testing.T) {
 		t.Fatal("HTTP login would overwrite existing Secure cookie")
 	}
 }
+
+func TestArbitraryNestedDeploymentPrefixes(t *testing.T) {
+	for _, prefix := range []string{"", "/custom-console", "/tools/video/control", "/api/v1/portal", "/assets/portal", "/health/tools"} {
+		for _, endpoint := range []string{"/api/v1/setup/status", "/assets/chunk.js", "/health/ready"} {
+			r := httptest.NewRequest("GET", "http://proxy.example"+prefix+endpoint, nil)
+			if got := routeRequest(r).URL.Path; got != endpoint {
+				t.Errorf("prefix %s endpoint %s became %s", prefix, endpoint, got)
+			}
+		}
+		r := httptest.NewRequest("GET", "http://proxy.example"+prefix+"/", nil)
+		if got := routeRequest(r).URL.Path; got != "/" {
+			t.Errorf("landing prefix %s became %s", prefix, got)
+		}
+	}
+}

@@ -6,6 +6,7 @@
 - [开发规范](docs/standards/开发规范.md)
 - [Docker 与 Actions](docs/deployment/Docker与Actions.md)
 - [订阅协议](docs/api/订阅协议.md)
+- [Nginx 任意子目录反代示例](deploy/nginx-subpath.conf.example)：后台使用 hash 路由，根目录和任意多级前缀均支持，无需设置构建 base。
 
 ## 开发检查
 

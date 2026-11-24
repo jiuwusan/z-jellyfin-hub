@@ -24,7 +24,13 @@ docker compose exec hub hub setup-code
 
 服务不限制后台访问的域名、IP、端口或 HTTP/HTTPS；不设置固定地址白名单，不自动发送长期 HSTS。容器内部监听 8097/TCP，Compose 将宿主机 8097 映射到容器 8097，可通过 http://宿主机IP:8097 访问后台；wk 内服务仍可使用 http://hub:8097。HTTPS 入口可转发到上述任一可达地址，不改其他既有服务。
 
-后台 API/资源采用相对地址，支持独立域名根路径和 /hub/ 等路径前缀；前缀可由反代保留或剥离，浏览器页面地址以 / 结尾。HTTPS 入口必须保留原 Host、Origin、Authorization 和 ETag。服务不从 X-Forwarded-Host/Forwarded 推导公开链接，也不因为转发头跳过 CSRF。
+后台采用 Vue Router hash 路由，例如 `/media-config/#/subscriptions`、`/tools/video/control/#/policies`；`#` 前是部署物理路径，`#` 后仅用于页面导航。没有写死 `/hub/` 或其他部署前缀，支持根目录、任意多级目录及 `index.html` 入口。API/静态资源/订阅链接只按物理路径推导，不携带页面 hash。
+
+前缀可由反代保留或剥离，目录入口以 `/` 结尾；无末尾斜杠时应由外部入口规范化。HTTPS 入口必须保留原 Host（含端口）、Origin、Authorization 和 ETag。服务不从 X-Forwarded-Host/Forwarded 推导公开链接，也不因为转发头跳过 CSRF。
+
+可参考 [Nginx 子目录示例](../../deploy/nginx-subpath.conf.example)，放入已有 `server {}` 内并将 `/media-config/` 替换为期望前缀。`proxy_pass http://z-jellyfin-hub:8097/;` 剥离前缀，去掉末尾 `/` 则保留前缀，两种均支持。不需要针对 hash 页面配置 `try_files` 或 `sub_filter`。示例只供审阅，本轮不修改现有 Nginx。
+
+刷新、浏览器前进/后退和订阅详情直达保留对应路由；未登录时先登录，再回到原目标。切页后旧页面响应不会跳回或弹出已离开页面的链接；登录初始化、退出和改密属于会话操作，不能因切页丢弃其状态更新。
 
 写操作校验请求 Host 与 Origin 的主机/端口匹配，并检查 CSRF Token；浏览器 HTTPS 使用独立的 __Host-hub_session Secure Cookie，HTTP 使用 hub_session_http，避免同域不同协议/端口的 Cookie 覆盖冲突。访问不同域名需分别登录。入口如更改 Host 而不保留原值，会导致同源校验失败，应修正代理请求头，不能通过固定公网地址环境变量修补。
 
