@@ -27,10 +27,10 @@ func TestAdminOriginCSRFAndSubscriptionETagRevocation(t *testing.T) {
 	hash, _ := secret.HashPassword(password)
 	db.SetMetadata("admin_username", "fixture")
 	db.SetMetadata("admin_password", hash)
-	svc := service.New(db, "https://hub.example.com")
+	svc := service.New(db)
 	handler := New(svc, Options{})
 	call := func(method, path, body string, cookie *http.Cookie, csrf, origin string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r := httptest.NewRequest(method, "https://hub.example.com"+path, strings.NewReader(body))
 		if origin != "" {
 			r.Header.Set("Origin", origin)
 		}

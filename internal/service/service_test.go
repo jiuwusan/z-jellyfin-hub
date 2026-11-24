@@ -6,6 +6,7 @@ import (
 	"github.com/jiuwusan/z-jellyfin-hub/internal/secret"
 	"github.com/jiuwusan/z-jellyfin-hub/internal/storage"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -19,7 +20,7 @@ func fixture(t *testing.T) (*Service, storage.Subscription, string) {
 		t.Fatal(e)
 	}
 	t.Cleanup(func() { db.Close() })
-	s := New(db, "https://hub.example.com")
+	s := New(db)
 	proxy, _ := s.SaveEntity("proxy", "", "Proxy", json.RawMessage(`{"type":"http","host":"proxy.example.com","port":8080,"username":"","password":""}`))
 	server, _ := s.SaveEntity("server", "", "Server", json.RawMessage(`{"baseUrl":"http://media.internal:8096/jellyfin"}`))
 	credential, e := s.SaveEntity("credential", "", "Credential", json.RawMessage(`{"serverId":"`+server.ID+`","username":"fixture","password":"fixture-only-value"}`))
@@ -32,6 +33,13 @@ func fixture(t *testing.T) (*Service, storage.Subscription, string) {
 		t.Fatal(e)
 	}
 	return s, sub, link
+}
+
+func TestSubscriptionLinkIsRelative(t *testing.T) {
+	_, _, link := fixture(t)
+	if !strings.HasPrefix(link, "api/v1/subscriptions/") {
+		t.Fatal("link depends on fixed public URL")
+	}
 }
 func TestDraftPublishRollbackAndRevocation(t *testing.T) {
 	s, sub, link := fixture(t)

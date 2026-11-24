@@ -12,12 +12,10 @@ import (
 	"github.com/jiuwusan/z-jellyfin-hub/internal/secret"
 	"github.com/jiuwusan/z-jellyfin-hub/internal/service"
 	"github.com/jiuwusan/z-jellyfin-hub/internal/storage"
-	"html"
 	"io"
 	"io/fs"
 	"net"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,9 +26,9 @@ import (
 var assets embed.FS
 
 type Options struct {
-	Dev       bool
-	RequireUI bool
-	Now       func() time.Time
+	RequireUI     bool
+	Now           func() time.Time
+	SetupComplete func()
 }
 type session struct {
 	CSRF, Username string
@@ -41,23 +39,23 @@ type window struct {
 	Until time.Time
 }
 type server struct {
-	svc             *service.Service
-	options         Options
-	origin, apiBase string
-	mu              sync.Mutex
-	sessions        map[[32]byte]session
-	limits          map[string]window
+	svc      *service.Service
+	options  Options
+	mu       sync.Mutex
+	sessions map[[32]byte]session
+	limits   map[string]window
 }
 
 func New(svc *service.Service, options Options) http.Handler {
 	if options.Now == nil {
 		options.Now = time.Now
 	}
-	u, _ := url.Parse(svc.PublicURL)
-	s := &server{svc: svc, options: options, origin: u.Scheme + "://" + u.Host, apiBase: strings.TrimRight(u.EscapedPath(), "/") + "/api/v1/admin", sessions: map[[32]byte]session{}, limits: map[string]window{}}
+	s := &server{svc: svc, options: options, sessions: map[[32]byte]session{}, limits: map[string]window{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, r *http.Request) { jsonResponse(w, 200, map[string]bool{"ok": true}) })
 	mux.HandleFunc("GET /health/ready", s.ready)
+	mux.HandleFunc("GET /api/v1/setup/status", s.setupStatus)
+	mux.HandleFunc("POST /api/v1/setup/complete", s.setup)
 	mux.HandleFunc("POST /api/v1/admin/login", s.login)
 	mux.HandleFunc("GET /api/v1/admin/session", s.admin(false, s.session))
 	mux.HandleFunc("POST /api/v1/admin/logout", s.admin(true, s.logout))
@@ -86,10 +84,7 @@ func New(svc *service.Service, options Options) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'")
 		w.Header().Set("Cache-Control", "no-store")
-		if !options.Dev {
-			w.Header().Set("Strict-Transport-Security", "max-age=31536000")
-		}
-		mux.ServeHTTP(w, r)
+		mux.ServeHTTP(w, routeRequest(r))
 	})
 }
 func jsonResponse(w http.ResponseWriter, status int, value any) {
@@ -169,20 +164,27 @@ func (s *server) allowed(r *http.Request, bucket string, max int) bool {
 	s.limits[key] = value
 	return true
 }
+
+const httpsSessionCookie = "__Host-hub_session"
+const httpSessionCookie = "hub_session_http"
+
 func (s *server) lookup(r *http.Request) (session, bool) {
-	cookie, e := r.Cookie("hub_session")
-	if e != nil {
-		return session{}, false
-	}
-	key := sha256.Sum256([]byte(cookie.Value))
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	v, ok := s.sessions[key]
-	if !ok || !s.options.Now().Before(v.Until) {
+	// Secure cookies are only sent by browsers over HTTPS, including behind TLS termination.
+	for _, name := range []string{httpsSessionCookie, httpSessionCookie} {
+		cookie, e := r.Cookie(name)
+		if e != nil {
+			continue
+		}
+		key := sha256.Sum256([]byte(cookie.Value))
+		v, ok := s.sessions[key]
+		if ok && s.options.Now().Before(v.Until) {
+			return v, true
+		}
 		delete(s.sessions, key)
-		return session{}, false
 	}
-	return v, true
+	return session{}, false
 }
 func (s *server) admin(write bool, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -191,18 +193,26 @@ func (s *server) admin(write bool, next http.HandlerFunc) http.HandlerFunc {
 			fail(w, 401, "UNAUTHORIZED")
 			return
 		}
-		if write && (r.Header.Get("Origin") != s.origin || subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(v.CSRF)) != 1) {
+		if write && (!sameOrigin(r) || subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(v.CSRF)) != 1) {
 			fail(w, 403, "FORBIDDEN")
 			return
 		}
 		next(w, r)
 	}
 }
-func (s *server) cookie(w http.ResponseWriter, value string, age int) {
-	http.SetCookie(w, &http.Cookie{Name: "hub_session", Value: value, Path: "/", HttpOnly: true, Secure: !s.options.Dev, SameSite: http.SameSiteStrictMode, MaxAge: age})
+func (s *server) cookie(w http.ResponseWriter, r *http.Request, value string, age int) {
+	secure := secureRequest(r)
+	name := httpSessionCookie
+	if secure {
+		name = httpsSessionCookie
+	}
+	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteStrictMode, MaxAge: age})
+	if age < 0 && secure {
+		http.SetCookie(w, &http.Cookie{Name: httpSessionCookie, Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: age})
+	}
 }
 func (s *server) login(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Origin") != s.origin {
+	if !sameOrigin(r) {
 		fail(w, 403, "FORBIDDEN")
 		return
 	}
@@ -248,7 +258,7 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	s.sessions[sha256.Sum256([]byte(token))] = session{CSRF: csrf, Username: name, Until: now.Add(8 * time.Hour)}
 	s.mu.Unlock()
-	s.cookie(w, token, 8*3600)
+	s.cookie(w, r, token, 8*3600)
 	jsonResponse(w, 200, map[string]string{"username": name, "csrf": csrf})
 }
 func (s *server) session(w http.ResponseWriter, r *http.Request) {
@@ -256,11 +266,14 @@ func (s *server) session(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, 200, map[string]string{"username": v.Username, "csrf": v.CSRF})
 }
 func (s *server) logout(w http.ResponseWriter, r *http.Request) {
-	cookie, _ := r.Cookie("hub_session")
 	s.mu.Lock()
-	delete(s.sessions, sha256.Sum256([]byte(cookie.Value)))
+	for _, name := range []string{httpsSessionCookie, httpSessionCookie} {
+		if cookie, e := r.Cookie(name); e == nil {
+			delete(s.sessions, sha256.Sum256([]byte(cookie.Value)))
+		}
+	}
 	s.mu.Unlock()
-	s.cookie(w, "", -1)
+	s.cookie(w, r, "", -1)
 	jsonResponse(w, 200, map[string]bool{"ok": true})
 }
 func (s *server) password(w http.ResponseWriter, r *http.Request) {
@@ -288,7 +301,7 @@ func (s *server) password(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.sessions = map[[32]byte]session{}
 	s.mu.Unlock()
-	s.cookie(w, "", -1)
+	s.cookie(w, r, "", -1)
 	jsonResponse(w, 200, map[string]bool{"ok": true})
 }
 func (s *server) entities(w http.ResponseWriter, r *http.Request) {
@@ -429,7 +442,7 @@ func (s *server) feedback(w http.ResponseWriter, r *http.Request) {
 	result(w, map[string]bool{"ok": true}, s.svc.Store.PutFeedback(r.PathValue("id"), v))
 }
 func (s *server) ready(w http.ResponseWriter, r *http.Request) {
-	if _, e := s.svc.Store.Metadata("admin_username"); e != nil {
+	if _, e := s.svc.Store.Metadata("key_check"); e != nil {
 		fail(w, 503, "INTERNAL")
 		return
 	}
@@ -452,6 +465,10 @@ func (s *server) static(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path != "/" && r.URL.Path != "/index.html" {
+		if !strings.Contains(r.URL.Path, ".") && !strings.HasSuffix(r.URL.Path, "/") {
+			http.Redirect(w, r, r.URL.Path+"/", http.StatusPermanentRedirect)
+			return
+		}
 		fail(w, 404, "NOT_FOUND")
 		return
 	}
@@ -461,5 +478,5 @@ func (s *server) static(w http.ResponseWriter, r *http.Request) {
 		body, _ = fs.ReadFile(assets, "webassets/fallback.html")
 		w.WriteHeader(503)
 	}
-	w.Write([]byte(strings.ReplaceAll(string(body), "__HUB_API_BASE__", html.EscapeString(s.apiBase))))
+	w.Write(body)
 }

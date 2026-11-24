@@ -21,4 +21,4 @@ go build ./cmd/hub
 
 生产使用 docker-compose.yml，外部网络为 wk。Actions 通过检查后发布 jiuwusan/z-jellyfin-hub 的 latest 与 sha 镜像；需配置 DOCKERHUB_TOKEN。发布镜像不等于已在 NAS 部署。
 
-首次启动生成独立密钥和管理员密码文件。密码与发布快照加密保存，订阅令牌只存摘要，后台写操作有 CSRF 防护。请保持 HTTPS、备份数据库与独立密钥，并保护完整订阅链接。
+首次启动自动生成独立密钥，并通过一次性初始化码引导创建管理员；Compose 仅配置 TZ=Asia/Shanghai。后台不限制域名、IP、端口或 HTTP/HTTPS，订阅链接由浏览器当前地址生成。密码与发布快照加密保存，订阅令牌只存摘要，后台写操作有 CSRF 防护。Android 订阅使用 HTTPS，备份数据库与独立密钥，并保护完整订阅链接。

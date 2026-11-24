@@ -8,18 +8,20 @@ import (
 	"github.com/jiuwusan/z-jellyfin-hub/internal/storage"
 )
 
-func TestInitRefusesOverwriteAndBackupRestores(t *testing.T) {
+func TestKeyPersistenceAndBackupRestores(t *testing.T) {
 	root := t.TempDir()
 	secrets := filepath.Join(root, "secrets")
-	if err := initialize(secrets); err != nil {
+	t.Setenv("HUB_MASTER_KEY_FILE", filepath.Join(secrets, "hub.key"))
+	t.Setenv("HUB_DATA_DIR", filepath.Join(root, "original"))
+	if err := prepareMasterKey(); err != nil {
 		t.Fatal(err)
 	}
 	original, err := os.ReadFile(filepath.Join(secrets, "hub.key"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = initialize(secrets); err == nil {
-		t.Fatal("initialization overwrote existing secrets")
+	if err = prepareMasterKey(); err != nil {
+		t.Fatal(err)
 	}
 	after, _ := os.ReadFile(filepath.Join(secrets, "hub.key"))
 	if string(original) != string(after) {
@@ -54,20 +56,77 @@ func TestInitRefusesOverwriteAndBackupRestores(t *testing.T) {
 	}
 }
 
-func TestRejectUnsafePublicURLBeforeOpeningStorage(t *testing.T) {
-	for _, fixture := range []struct{ public, dev, listen string }{
-		{"http://hub.example.com", "", ":8080"},
-		{"http://hub.example.com", "true", "127.0.0.1:8080"},
-		{"http://127.0.0.1:8080", "true", ":8080"},
-		{"https://user:password@hub.example.com", "", ":8080"},
-		{"https://hub.example.com?secret=fixture", "", ":8080"},
-	} {
-		t.Setenv("HUB_PUBLIC_URL", fixture.public)
-		t.Setenv("HUB_DEV_ALLOW_HTTP", fixture.dev)
-		t.Setenv("HUB_LISTEN", fixture.listen)
-		t.Setenv("HUB_MASTER_KEY_FILE", filepath.Join(t.TempDir(), "absent"))
-		if err := serve(); err == nil || err.Error() == "master key file is unavailable" {
-			t.Fatal("unsafe URL reached storage startup")
-		}
+func TestFreshStartupCreatesStableKeyAndRefusesMissingExistingKey(t *testing.T) {
+	root := t.TempDir()
+	data := filepath.Join(root, "data")
+	key := filepath.Join(root, "secrets", "hub.key")
+	t.Setenv("HUB_DATA_DIR", data)
+	t.Setenv("HUB_MASTER_KEY_FILE", key)
+	db, err := store()
+	if err == nil {
+		db.Close()
+		t.Fatal("store unexpectedly opened before startup initialization")
+	}
+	// serve must initialize its secret before opening storage, without any public URL.
+	t.Setenv("HUB_LISTEN", "invalid-listen-address")
+	if err = serve(); err == nil {
+		t.Fatal("invalid listen fixture unexpectedly started")
+	}
+	original, err := os.ReadFile(key)
+	if err != nil {
+		t.Fatal("fresh startup did not generate master key", err)
+	}
+	if err = serve(); err == nil {
+		t.Fatal("invalid listen fixture unexpectedly started")
+	}
+	after, _ := os.ReadFile(key)
+	if string(original) != string(after) {
+		t.Fatal("restart changed master key")
+	}
+	if err = os.Remove(key); err != nil {
+		t.Fatal(err)
+	}
+	if err = serve(); err == nil {
+		t.Fatal("existing database started without its key")
+	}
+	if _, err = os.Stat(key); !os.IsNotExist(err) {
+		t.Fatal("existing database caused a replacement key to be generated")
+	}
+}
+
+func TestSetupCodeStableUntilInitializationCompletes(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HUB_DATA_DIR", filepath.Join(root, "data"))
+	t.Setenv("HUB_MASTER_KEY_FILE", filepath.Join(root, "secrets", "hub.key"))
+	if err := prepareMasterKey(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := store()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err = prepareSetup(db); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(setupCodePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = prepareSetup(db); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(setupCodePath())
+	if string(before) != string(after) {
+		t.Fatal("restart changed unfinished setup code")
+	}
+	if err = db.InitializeAdmin("fixture", "fixture-hash"); err != nil {
+		t.Fatal(err)
+	}
+	if err = prepareSetup(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = os.Stat(setupCodePath()); !os.IsNotExist(err) {
+		t.Fatal("completed setup code remained on disk")
 	}
 }

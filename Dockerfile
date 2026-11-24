@@ -18,12 +18,12 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags=
 
 FROM alpine:3.23
 RUN apk add --no-cache ca-certificates tzdata && addgroup -g 10001 hub && adduser -D -u 10001 -G hub hub \
-    && mkdir -p /data && chown 10001:10001 /data
+    && mkdir -p /data /secrets && chown 10001:10001 /data /secrets
 COPY --from=build /out/hub /usr/local/bin/hub
 USER 10001:10001
-ENV HUB_DATA_DIR=/data HUB_LISTEN=:8080
-VOLUME ["/data"]
-EXPOSE 8080
+ENV HUB_DATA_DIR=/data HUB_LISTEN=:8097
+VOLUME ["/data", "/secrets"]
+EXPOSE 8097
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["hub", "health"]
 ENTRYPOINT ["hub"]
 CMD ["serve"]

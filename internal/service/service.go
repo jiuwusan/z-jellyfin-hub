@@ -22,9 +22,8 @@ var (
 )
 
 type Service struct {
-	Store     *storage.Store
-	PublicURL string
-	mu        sync.Mutex
+	Store *storage.Store
+	mu    sync.Mutex
 }
 type Preview struct {
 	Configuration    domain.Configuration `json:"configuration"`
@@ -32,8 +31,8 @@ type Preview struct {
 	DraftDigest      string               `json:"draftDigest"`
 }
 
-func New(store *storage.Store, publicURL string) *Service {
-	return &Service{Store: store, PublicURL: strings.TrimRight(publicURL, "/")}
+func New(store *storage.Store) *Service {
+	return &Service{Store: store}
 }
 func ID() string {
 	b := make([]byte, 16)
@@ -177,7 +176,7 @@ func (s *Service) SaveSubscription(v storage.Subscription) (storage.Subscription
 	return v, link, nil
 }
 func (s *Service) link(id, token string) string {
-	return s.PublicURL + "/api/v1/subscriptions/" + id + "/config#" + token
+	return "api/v1/subscriptions/" + id + "/config#" + token
 }
 func (s *Service) Rotate(id string) (string, error) {
 	s.mu.Lock()

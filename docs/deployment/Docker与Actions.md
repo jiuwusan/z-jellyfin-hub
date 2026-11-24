@@ -2,49 +2,51 @@
 
 ## 镜像发布
 
-参照 z-sub-convert，PR 执行检查，master push 或 workflow_dispatch 在检查通过后构建 linux/amd64、linux/arm64 并推送 Docker Hub。仓库配置 secret `DOCKERHUB_TOKEN`，账号为 `jiuwusan`。不保存服务器密码，不 SSH 自动部署 NAS。
+PR 执行 Go 测试/vet/race、前端测试/构建与 Compose 检查；master push 或 workflow_dispatch 检查通过后推送 Docker Hub 的 linux/amd64、linux/arm64 镜像。仓库 secret 为 DOCKERHUB_TOKEN。Actions 不 SSH 部署 NAS。
 
-## 首次启动
+## 首次启动与引导
 
-在新部署目录保存 docker-compose.yml，将 .env.example 复制为 .env 并设置真实 HTTPS 入口。不要提交 .env、secrets 或数据卷。
+保存 docker-compose.yml 后即可启动，environment 仅保留 TZ=Asia/Shanghai，不需要 .env；.env.example 仅用于可选 IMAGE_TAG 覆盖。外部网络 wk 必须已经存在。
 
-```sh
-docker pull jiuwusan/z-jellyfin-hub:latest
-mkdir -p secrets
-docker run --rm --user 0 -v "$PWD/secrets:/secrets" jiuwusan/z-jellyfin-hub:latest init --secrets-dir /secrets
+~~~sh
 docker network inspect wk
 docker compose config --quiet
+docker compose pull
 docker compose up -d
-```
+docker compose exec hub hub setup-code
+~~~
 
-初始化只创建新的随机密钥和管理员密码文件；已有文件时拒绝覆盖。文件归属运行 UID 10001，权限 0600。管理员首次密码在 secrets/admin.password，需通过有权限的本地操作查看，不输出到 Actions 或服务日志。
+首次启动自动在独立 secrets 卷生成 /secrets/hub.key 和一次性 setup.code（0600），数据库位于 data 卷 /data/hub.db。最后一条命令只在初始化尚未完成时显示初始化码，不写到服务/Actions 日志。浏览器引导填写该码、管理员账号和至少 12 字符的密码，不再填写公网地址。完成后码失效并删除，管理员密码保存 Argon2id 哈希；重启或覆盖镜像不重新初始化。
 
-容器仅暴露 wk 内部 8080 端口。HTTPS 入口转发到 `http://hub:8080`；不要公开额外 HTTP 端口。入口需保留 Host/Origin、认证头和订阅响应的 ETag，禁止订阅路径共享缓存与认证头日志。建议使用独立域名。新增 HTTPS 入口由部署者执行，不修改已有 Jellyfin/mihomo 服务。
+容器以 UID 10001 运行，根文件系统只读，data/secrets 卷可写。不要删除卷来更新服务。已有数据库缺少原主密钥会拒绝启动，不能生成替代密钥覆盖；挂错密钥也会拒绝打开数据。
 
-可设置包含路径前缀的 HUB_PUBLIC_URL；入口应统一保留或剥离该前缀，不能重复添加。后台 API 基址从公开配置生成，订阅完整 URL 保留前缀。
+## 访问与订阅地址
 
-## 更新与回退
+服务不限制后台访问的域名、IP、端口或 HTTP/HTTPS；不设置固定地址白名单，不自动发送长期 HSTS。容器内部监听 8097/TCP，Compose 将宿主机 8097 映射到容器 8097，可通过 http://宿主机IP:8097 访问后台；wk 内服务仍可使用 http://hub:8097。HTTPS 入口可转发到上述任一可达地址，不改其他既有服务。
 
-```sh
+后台 API/资源采用相对地址，支持独立域名根路径和 /hub/ 等路径前缀；前缀可由反代保留或剥离，浏览器页面地址以 / 结尾。HTTPS 入口必须保留原 Host、Origin、Authorization 和 ETag。服务不从 X-Forwarded-Host/Forwarded 推导公开链接，也不因为转发头跳过 CSRF。
+
+写操作校验请求 Host 与 Origin 的主机/端口匹配，并检查 CSRF Token；浏览器 HTTPS 使用独立的 __Host-hub_session Secure Cookie，HTTP 使用 hub_session_http，避免同域不同协议/端口的 Cookie 覆盖冲突。访问不同域名需分别登录。入口如更改 Host 而不保留原值，会导致同源校验失败，应修正代理请求头，不能通过固定公网地址环境变量修补。
+
+创建或轮换订阅时，API 仅返回相对路径，浏览器用当前页面地址生成完整链接。因此应从手机能到达的 HTTPS 地址打开后台后复制。HTTP 或仅内网可达地址仍可管理，但生成的链接不能直接用于要求 HTTPS 的 Android；页面会提示，不阻止操作。复制后更换后台访问地址不会自动改变已经发给手机的链接。
+
+## 更新、备份与恢复
+
+~~~sh
 docker compose pull
 docker compose up -d
 docker compose ps
-```
-
-默认 latest 适合日常更新；生产可将 IMAGE_TAG 固定为 `sha-提交SHA`。回退镜像前保留数据库一致性备份及原密钥；不删除数据卷或重新初始化密钥。
-
-## 备份与恢复
-
-```sh
 docker compose exec hub hub backup --output /data/backup-new.db
-```
+~~~
 
-输出文件必须不存在。通过 SQLite VACUUM INTO 生成一致性快照，不直接复制正在写入的 hub.db。将快照导出保管，主密钥另行保管，不放在同一个公开备份包。
+备份输出文件须不存在。通过 SQLite VACUUM INTO 生成一致性快照，再从容器导出并保存到仓库外；主密钥单独从 secrets 卷保管，数据库与密钥不要放在同一个公开备份包。丢失密钥无法解密授权。
 
-恢复时停止新 Hub 实例，在空数据卷恢复快照为 hub.db，挂载对应原密钥并启动。只备份数据库而丢失密钥无法解密凭据。不要删除现有实例或其他服务的数据进行恢复测试。
+恢复时停止 Hub，在 data 卷还原快照为 hub.db，在 secrets 卷还原对应原 hub.key，并核对 UID 10001 读写权限；已初始化数据不再出现引导。恢复测试使用独立目录或卷，不删除其他服务数据。升级旧版独立 secret 文件部署时，必须先保留原密钥，迁移至 /secrets/hub.key，或显式用 HUB_MASTER_KEY_FILE 指定旧只读挂载路径；已有管理员无需重新创建。
+
+生产可通过 IMAGE_TAG 固定已发布 sha 镜像。回退前保留一致性备份及原密钥；不要重新初始化。
 
 ## 本地开发
 
-先执行 web/npm ci 和 npm run build，再 go run ./cmd/hub init --secrets-dir 本地私有目录。将密钥/密码文件路径设置为 HUB_MASTER_KEY_FILE/HUB_ADMIN_PASSWORD_FILE，HUB_DATA_DIR 指向临时目录。
+先在 web 执行 npm ci、npm test 和 npm run build。Go 可选环境变量仅供路径/监听覆盖：HUB_LISTEN=127.0.0.1:8097、HUB_DATA_DIR 指向临时数据库目录、HUB_MASTER_KEY_FILE 指向独立临时密钥路径。执行 go run ./cmd/hub 即可进入引导；用相同路径执行 go run ./cmd/hub setup-code 获取一次性码。无需 HUB_PUBLIC_URL、HUB_ADMIN_USER 或 HUB_ADMIN_PASSWORD_FILE。
 
-仅本机浏览器开发可同时设置 HUB_DEV_ALLOW_HTTP=true、HUB_LISTEN=127.0.0.1:8080、HUB_PUBLIC_URL=http://127.0.0.1:8080。该例外不能监听公网，也不能用于 Android 正式订阅。Android 订阅始终要求 HTTPS。
+本机无 Docker 时只验证本地二进制和 YAML，不能宣称容器或镜像发布已经通过。

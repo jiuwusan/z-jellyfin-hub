@@ -30,19 +30,14 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - name: Build admin UI
         working-directory: web
-        run: npm ci --no-audit --no-fund && npm run build
+        run: npm ci --no-audit --no-fund && npm test && npm run build
       - name: Check Go formatting, tests and vet
         run: |
           test -z "$(gofmt -l cmd internal)"
           go vet ./...
           go test -race ./...
       - name: Validate Compose
-        env:
-          HUB_PUBLIC_URL: https://hub.example.com
-        run: |
-          mkdir -p secrets
-          touch secrets/hub.key secrets/admin.password
-          docker compose config --quiet
+        run: docker compose config --quiet
 
   publish:
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'

@@ -1,22 +1,16 @@
-name: z-jellyfin-hub
-
 services:
   hub:
     image: jiuwusan/z-jellyfin-hub:${IMAGE_TAG:-latest}
+    container_name: z-jellyfin-hub
+    pull_policy: always
     restart: always
     environment:
-      HUB_PUBLIC_URL: ${HUB_PUBLIC_URL:?Set the public HTTPS base URL}
-      HUB_ADMIN_USER: ${HUB_ADMIN_USER:-admin}
-      HUB_DATA_DIR: /data
-      HUB_MASTER_KEY_FILE: /run/secrets/hub_master_key
-      HUB_ADMIN_PASSWORD_FILE: /run/secrets/hub_admin_password
-    expose:
-      - "8080"
+      TZ: Asia/Shanghai
+    ports:
+      - "8097:8097"
     volumes:
       - data:/data
-    secrets:
-      - hub_master_key
-      - hub_admin_password
+      - secrets:/secrets
     networks:
       - wk
     read_only: true
@@ -29,12 +23,7 @@ services:
 
 volumes:
   data:
-
-secrets:
-  hub_master_key:
-    file: ./secrets/hub.key
-  hub_admin_password:
-    file: ./secrets/admin.password
+  secrets:
 
 networks:
   wk:

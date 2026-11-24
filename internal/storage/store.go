@@ -17,6 +17,31 @@ type Store struct {
 	db  *sql.DB
 	box *secret.Box
 }
+
+// The transaction prevents concurrent setup requests from replacing the first administrator.
+func (s *Store) InitializeAdmin(username, passwordHash string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var existing string
+	err = tx.QueryRow("SELECT value FROM metadata WHERE key='admin_password'").Scan(&existing)
+	if err == nil {
+		return ErrConflict
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if _, err = tx.Exec("INSERT INTO metadata(key,value) VALUES('admin_username',?),('admin_password',?)", username, passwordHash); err != nil {
+		return err
+	}
+	if _, err = tx.Exec("DELETE FROM metadata WHERE key='setup_code_hash'"); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 type Entity struct {
 	ID          string          `json:"id"`
 	Kind        string          `json:"kind"`

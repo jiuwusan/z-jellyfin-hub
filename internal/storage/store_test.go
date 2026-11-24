@@ -3,11 +3,43 @@ package storage
 import (
 	"bytes"
 	"crypto/rand"
+	"errors"
 	"github.com/jiuwusan/z-jellyfin-hub/internal/secret"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 )
+
+func TestConcurrentSetupHasOneWinner(t *testing.T) {
+	key := make([]byte, 32)
+	rand.Read(key)
+	box, _ := secret.NewBox(key)
+	db, err := Open(filepath.Join(t.TempDir(), "hub.db"), box)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var won atomic.Int32
+	var wait sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			err := db.InitializeAdmin("fixture", "fixture-hash")
+			if err == nil {
+				won.Add(1)
+			} else if !errors.Is(err, ErrConflict) {
+				t.Error(err)
+			}
+		}()
+	}
+	wait.Wait()
+	if won.Load() != 1 {
+		t.Fatal("setup did not have exactly one winner")
+	}
+}
 
 func TestEncryptedPersistenceAndAtomicVersions(t *testing.T) {
 	key := make([]byte, 32)
