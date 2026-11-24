@@ -103,4 +103,25 @@ func TestAdminOriginCSRFAndSubscriptionETagRevocation(t *testing.T) {
 	if get(etag, token).Code != 401 {
 		t.Fatal("304 bypassed token revocation")
 	}
+	before, _ := db.Metadata("admin_password")
+	bad, _ := json.Marshal(map[string]string{"oldPassword": password, "newPassword": "Test!23"})
+	if call("POST", "/api/v1/admin/password", string(bad), cookies[0], auth["csrf"], "https://hub.example.com").Code != 400 {
+		t.Fatal("short administrator password accepted")
+	}
+	after, _ := db.Metadata("admin_password")
+	if after != before {
+		t.Fatal("invalid password change modified administrator")
+	}
+	good, _ := json.Marshal(map[string]string{"oldPassword": password, "newPassword": "Test!234"})
+	if w := call("POST", "/api/v1/admin/password", string(good), cookies[0], auth["csrf"], "https://hub.example.com"); w.Code != 200 {
+		t.Fatal("eight-character password change failed", w.Code)
+	}
+	if call("GET", "/api/v1/admin/session", "", cookies[0], "", "").Code != 401 {
+		t.Fatal("password change kept old session")
+	}
+	updated, _ := json.Marshal(map[string]string{"username": "fixture", "password": "Test!234"})
+	if call("POST", "/api/v1/admin/login", string(updated), nil, "", "https://hub.example.com").Code != 200 {
+		t.Fatal("new password login failed")
+	}
+
 }

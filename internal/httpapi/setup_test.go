@@ -28,7 +28,7 @@ func TestFirstRunSetupRequiresCodeAndCannotReplaceAdministrator(t *testing.T) {
 	db.SetMetadata("setup_code_hash", hex.EncodeToString(hash))
 	handler := New(service.New(db), Options{})
 	call := func(path, origin, token string) *httptest.ResponseRecorder {
-		body, _ := json.Marshal(map[string]string{"code": token, "username": "fixture-admin", "password": "Fixture-password-42"})
+		body, _ := json.Marshal(map[string]string{"code": token, "username": "fixture-admin", "password": "Test!234"})
 		method := "POST"
 		if path == "status" {
 			method = "GET"
@@ -58,7 +58,7 @@ func TestFirstRunSetupRequiresCodeAndCannotReplaceAdministrator(t *testing.T) {
 		t.Fatal("setup remained available")
 	}
 	stored, _ := db.Metadata("admin_password")
-	if !secret.VerifyPassword(stored, "Fixture-password-42") {
+	if !secret.VerifyPassword(stored, "Test!234") {
 		t.Fatal("password not hashed correctly")
 	}
 }

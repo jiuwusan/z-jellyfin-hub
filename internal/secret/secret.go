@@ -67,7 +67,7 @@ func Matches(hash []byte, token string) bool {
 	return err == nil && len(hash) == 32 && subtle.ConstantTimeCompare(hash, got) == 1
 }
 func HashPassword(password string) (string, error) {
-	if len(password) < 12 || len(password) > 1024 {
+	if len(password) < 8 || len(password) > 1024 {
 		return "", ErrInvalid
 	}
 	salt := make([]byte, 16)

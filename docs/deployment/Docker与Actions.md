@@ -16,7 +16,7 @@ docker compose up -d
 docker compose exec hub hub setup-code
 ~~~
 
-首次启动自动在独立 secrets 卷生成 /secrets/hub.key 和一次性 setup.code（0600），数据库位于 data 卷 /data/hub.db。最后一条命令只在初始化尚未完成时显示初始化码，不写到服务/Actions 日志。浏览器引导填写该码、管理员账号和至少 12 字符的密码，不再填写公网地址。完成后码失效并删除，管理员密码保存 Argon2id 哈希；重启或覆盖镜像不重新初始化。
+首次启动自动在独立 secrets 卷生成 /secrets/hub.key 和一次性 setup.code（0600），数据库位于 data 卷 /data/hub.db。最后一条命令只在初始化尚未完成时显示初始化码，不写到服务/Actions 日志。浏览器引导填写该码、管理员账号和至少 8 位的密码，不再填写公网地址。完成后码失效并删除，管理员密码保存 Argon2id 哈希；重启或覆盖镜像不重新初始化。
 
 容器以 UID 10001 运行，根文件系统只读，data/secrets 卷可写。不要删除卷来更新服务。已有数据库缺少原主密钥会拒绝启动，不能生成替代密钥覆盖；挂错密钥也会拒绝打开数据。
 

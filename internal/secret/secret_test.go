@@ -3,8 +3,25 @@ package secret
 import (
 	"bytes"
 	"crypto/rand"
+	"strings"
 	"testing"
 )
+
+func TestAdministratorPasswordEightCharacterMinimum(t *testing.T) {
+	if _, err := HashPassword("Test!23"); err == nil {
+		t.Fatal("seven-character password accepted")
+	}
+	hash, err := HashPassword("Test!234")
+	if err != nil {
+		t.Fatal("eight-character password rejected", err)
+	}
+	if !VerifyPassword(hash, "Test!234") {
+		t.Fatal("eight-character password verification failed")
+	}
+	if _, err = HashPassword(strings.Repeat("x", 1025)); err == nil {
+		t.Fatal("oversized password accepted")
+	}
+}
 
 func TestBoxRejectsTamperingAndWrongContext(t *testing.T) {
 	key := make([]byte, 32)
