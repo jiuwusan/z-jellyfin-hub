@@ -14,11 +14,13 @@ import (
 )
 
 var (
-	ErrUnauthorized = errors.New("invalid subscription")
-	ErrDisabled     = errors.New("subscription disabled")
-	ErrNotPublished = errors.New("subscription not published")
-	ErrClientOld    = errors.New("client upgrade required")
-	ErrReferenced   = errors.New("configuration is referenced")
+	ErrUnauthorized     = errors.New("invalid subscription")
+	ErrDisabled         = errors.New("subscription disabled")
+	ErrNotPublished     = errors.New("subscription not published")
+	ErrClientOld        = errors.New("client upgrade required")
+	ErrReferenced       = errors.New("configuration is referenced")
+	ErrTokenUnavailable = errors.New("original token must be supplied")
+	ErrTokenMismatch    = errors.New("original token does not match")
 )
 
 type Service struct {
@@ -163,6 +165,11 @@ func (s *Service) SaveSubscriptionWithToken(v storage.Subscription, specified st
 			return v, "", domain.ErrInvalid
 		}
 		v.Revision = 0
+		v.TokenCipher, e = s.Store.SealSubscriptionToken(v.ID, token)
+		if e != nil {
+			return v, "", e
+		}
+		v.HasSavedToken = true
 	} else {
 		if specified != "" {
 			return v, "", domain.ErrInvalid
@@ -173,6 +180,8 @@ func (s *Service) SaveSubscriptionWithToken(v storage.Subscription, specified st
 		}
 		v.Enabled = old.Enabled
 		v.TokenHash = old.TokenHash
+		v.TokenCipher = old.TokenCipher
+		v.HasSavedToken = old.HasSavedToken
 		v.Revision = old.Revision
 	}
 	if _, e := s.build(v); e != nil {
@@ -204,12 +213,49 @@ func (s *Service) SetToken(id, token string) (string, error) {
 			return "", e
 		}
 	}
-	digest, e := secret.Digest(token)
+	_, e = secret.Digest(token)
 	if e != nil {
 		return "", domain.ErrInvalid
 	}
-	if e = s.Store.SetToken(id, digest); e != nil {
+	if e = s.Store.SetEncryptedToken(id, token); e != nil {
 		return "", e
+	}
+	return s.link(token), nil
+}
+
+func (s *Service) SubscriptionLink(id string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, err := s.Store.Subscription(id)
+	if err != nil {
+		return "", err
+	}
+	if !v.HasSavedToken {
+		return "", ErrTokenUnavailable
+	}
+	token, err := s.Store.SubscriptionToken(id)
+	if err != nil {
+		return "", err
+	}
+	return s.link(token), nil
+}
+
+func (s *Service) RestoreSubscriptionLink(id, token string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, err := s.Store.Subscription(id)
+	if err != nil {
+		return "", err
+	}
+	if !secret.Matches(v.TokenHash, token) {
+		return "", ErrTokenMismatch
+	}
+	sealed, err := s.Store.SealSubscriptionToken(id, token)
+	if err != nil {
+		return "", err
+	}
+	if err = s.Store.RestoreTokenCipher(id, v.TokenHash, sealed); err != nil {
+		return "", err
 	}
 	return s.link(token), nil
 }

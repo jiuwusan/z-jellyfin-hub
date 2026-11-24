@@ -75,6 +75,8 @@ func New(svc *service.Service, options Options) http.Handler {
 	mux.HandleFunc("POST /api/v1/admin/subscriptions/{id}/rollback", s.admin(true, s.rollback))
 	mux.HandleFunc("POST /api/v1/admin/subscriptions/{id}/rotate", s.admin(true, s.rotate))
 	mux.HandleFunc("POST /api/v1/admin/subscriptions/{id}/token", s.admin(true, s.setToken))
+	mux.HandleFunc("POST /api/v1/admin/subscriptions/{id}/link", s.admin(true, s.subscriptionLink))
+	mux.HandleFunc("POST /api/v1/admin/subscriptions/{id}/link/restore", s.admin(true, s.restoreSubscriptionLink))
 	mux.HandleFunc("POST /api/v1/admin/subscriptions/{id}/state", s.admin(true, s.state))
 	mux.HandleFunc("GET /api/v1/subscription/config", s.configuration)
 	mux.HandleFunc("POST /api/v1/subscription/feedback", s.feedback)
@@ -95,6 +97,8 @@ func jsonResponse(w http.ResponseWriter, status int, value any) {
 }
 func fail(w http.ResponseWriter, status int, code string) {
 	messages := map[string]string{"UNAUTHORIZED": "认证无效，请重新登录或更新订阅", "FORBIDDEN": "请求校验失败", "CONFIG_INVALID": "配置不完整或包含不支持的值", "CONFLICT": "配置已变化，请刷新预览后重试", "REFERENCE_IN_USE": "配置仍被引用，不能删除", "NOT_FOUND": "记录不存在", "SUBSCRIPTION_DISABLED": "订阅已停用", "NOT_PUBLISHED": "订阅尚未发布", "CLIENT_TOO_OLD": "请更新客户端", "RATE_LIMITED": "操作过于频繁，请稍后重试", "TOKEN_IN_USE": "令牌已绑定其他订阅，请使用不同令牌", "INTERNAL": "服务暂时不可用", "UI_NOT_BUILT": "管理页面尚未构建"}
+	messages["TOKEN_NOT_SAVED"] = "请先补录该订阅的原链接或令牌，现有链接保持有效"
+	messages["TOKEN_MISMATCH"] = "原令牌与该订阅不匹配，未修改现有链接"
 	jsonResponse(w, status, map[string]string{"code": code, "message": messages[code]})
 }
 func result(w http.ResponseWriter, value any, e error) {
@@ -111,6 +115,10 @@ func result(w http.ResponseWriter, value any, e error) {
 		fail(w, 409, "NOT_PUBLISHED")
 	case errors.Is(e, service.ErrClientOld):
 		fail(w, 426, "CLIENT_TOO_OLD")
+	case errors.Is(e, service.ErrTokenUnavailable):
+		fail(w, 409, "TOKEN_NOT_SAVED")
+	case errors.Is(e, service.ErrTokenMismatch):
+		fail(w, 400, "TOKEN_MISMATCH")
 	case errors.Is(e, domain.ErrInvalid):
 		fail(w, 400, "CONFIG_INVALID")
 	case errors.Is(e, storage.ErrTokenInUse):
@@ -351,6 +359,22 @@ func (s *server) setToken(w http.ResponseWriter, r *http.Request) {
 	link, e := s.svc.SetToken(r.PathValue("id"), input.Token)
 	result(w, map[string]string{"link": link}, e)
 }
+func (s *server) subscriptionLink(w http.ResponseWriter, r *http.Request) {
+	link, err := s.svc.SubscriptionLink(r.PathValue("id"))
+	result(w, map[string]string{"link": link}, err)
+}
+
+func (s *server) restoreSubscriptionLink(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Token string `json:"token"`
+	}
+	if !decode(w, r, &input) {
+		return
+	}
+	link, err := s.svc.RestoreSubscriptionLink(r.PathValue("id"), input.Token)
+	result(w, map[string]string{"link": link}, err)
+}
+
 func (s *server) preview(w http.ResponseWriter, r *http.Request) {
 	v, e := s.svc.Preview(r.PathValue("id"))
 	result(w, v, e)

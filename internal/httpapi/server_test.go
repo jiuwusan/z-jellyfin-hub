@@ -92,6 +92,40 @@ func TestAdminCSRFAndSubscriptionETagRevocation(t *testing.T) {
 		return w
 	}
 	token := link[len(link)-43:]
+	linkPath := "/api/v1/admin/subscriptions/" + sub.ID + "/link"
+	if call("POST", linkPath, "", nil, "", "").Code != 401 {
+		t.Fatal("copy without session accepted")
+	}
+	if call("POST", linkPath, "", cookies[0], "", "").Code != 403 {
+		t.Fatal("copy without CSRF accepted")
+	}
+	copyResponse := call("POST", linkPath, "", cookies[0], auth["csrf"], "")
+	if copyResponse.Code != 200 || copyResponse.Header().Get("Cache-Control") != "no-store" || !strings.Contains(copyResponse.Body.String(), token) {
+		t.Fatal("explicit link retrieval failed")
+	}
+	ordinary := call("GET", "/api/v1/admin/subscriptions", "", cookies[0], "", "")
+	if strings.Contains(ordinary.Body.String(), token) || !strings.Contains(ordinary.Body.String(), `"hasSavedToken":true`) {
+		t.Fatal("ordinary response exposed token or omitted capability")
+	}
+	digest, _ := secret.Digest(token)
+	if err := db.SetToken(sub.ID, digest); err != nil {
+		t.Fatal(err)
+	}
+	if call("POST", linkPath, "", cookies[0], auth["csrf"], "").Code != 409 {
+		t.Fatal("legacy copy was not distinguished")
+	}
+	wrong, _ := secret.Token()
+	wrongBody, _ := json.Marshal(map[string]string{"token": wrong})
+	if call("POST", linkPath+"/restore", string(wrongBody), cookies[0], auth["csrf"], "").Code != 400 {
+		t.Fatal("mismatched restoration accepted")
+	}
+	restoreBody, _ := json.Marshal(map[string]string{"token": token})
+	if call("POST", linkPath+"/restore", string(restoreBody), cookies[0], "", "").Code != 403 {
+		t.Fatal("restore bypassed CSRF")
+	}
+	if call("POST", linkPath+"/restore", string(restoreBody), cookies[0], auth["csrf"], "").Code != 200 {
+		t.Fatal("original link restoration failed")
+	}
 	first := get("", token)
 	if first.Code != 200 || !bytes.Contains(first.Body.Bytes(), []byte("fixture-only")) {
 		t.Fatal("config missing", first.Code)

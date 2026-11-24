@@ -63,6 +63,8 @@ type Subscription struct {
 	PolicyID               string `json:"policyId"`
 	Enabled                bool   `json:"enabled"`
 	TokenHash              []byte `json:"-"`
+	TokenCipher            []byte `json:"-"`
+	HasSavedToken          bool   `json:"hasSavedToken"`
 	Revision               int64  `json:"revision"`
 	RefreshIntervalSeconds int    `json:"refreshIntervalSeconds"`
 	MinClientVersionCode   int    `json:"minClientVersionCode"`
@@ -104,6 +106,10 @@ func Open(path string, box *secret.Box) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := store.migrateTokenCipher(); err != nil {
+		db.Close()
+		return nil, err
+	}
 	if _, e = db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS subscriptions_token_unique ON subscriptions(token_hash)"); e != nil {
 		db.Close()
 		return nil, e
@@ -130,6 +136,82 @@ func Open(path string, box *secret.Box) (*Store, error) {
 
 func (s *Store) InstanceID() string { return s.instanceID }
 
+func (s *Store) migrateTokenCipher() error {
+	rows, err := s.db.Query("PRAGMA table_info(subscriptions)")
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var cid, required, primary int
+		var name, kind string
+		var defaultValue sql.NullString
+		if err = rows.Scan(&cid, &name, &kind, &required, &defaultValue, &primary); err != nil {
+			rows.Close()
+			return err
+		}
+		if name == "token_cipher" {
+			found = true
+		}
+	}
+	err = rows.Err()
+	rows.Close() // Release the single connection before ALTER TABLE.
+	if err != nil {
+		return err
+	}
+	if !found {
+		_, err = s.db.Exec("ALTER TABLE subscriptions ADD COLUMN token_cipher BLOB")
+	}
+	return err
+}
+
+func (s *Store) SealSubscriptionToken(id, token string) ([]byte, error) {
+	if _, err := secret.Digest(token); err != nil {
+		return nil, err
+	}
+	return s.box.Seal("subscription-token:"+id, []byte(token))
+}
+
+func (s *Store) SubscriptionToken(id string) (string, error) {
+	v, err := s.Subscription(id)
+	if err != nil {
+		return "", err
+	}
+	if !v.HasSavedToken {
+		return "", sql.ErrNoRows
+	}
+	plain, err := s.box.Open("subscription-token:"+id, v.TokenCipher)
+	if err != nil || !secret.Matches(v.TokenHash, string(plain)) {
+		return "", secret.ErrInvalid
+	}
+	return string(plain), nil
+}
+
+// A matching digest in the WHERE clause prevents a concurrent rotation from being undone.
+func (s *Store) RestoreTokenCipher(id string, hash, sealed []byte) error {
+	result, err := s.db.Exec("UPDATE subscriptions SET token_cipher=? WHERE id=? AND token_hash=?", sealed, id, hash)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err == nil && count == 0 {
+		return ErrConflict
+	}
+	return err
+}
+
+func (s *Store) SetEncryptedToken(id, token string) error {
+	hash, err := secret.Digest(token)
+	if err != nil {
+		return err
+	}
+	sealed, err := s.SealSubscriptionToken(id, token)
+	if err != nil {
+		return err
+	}
+	return s.setToken(id, hash, sealed)
+}
+
 func tokenWriteError(err error) error {
 	var failure interface{ Code() int }
 	if errors.As(err, &failure) && failure.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE {
@@ -143,7 +225,10 @@ func (s *Store) SubscriptionByToken(hash []byte) (Subscription, error) {
 }
 
 func (s *Store) SetToken(id string, hash []byte) error {
-	result, err := s.db.Exec("UPDATE subscriptions SET token_hash=? WHERE id=?", hash, id)
+	return s.setToken(id, hash, nil)
+}
+func (s *Store) setToken(id string, hash, sealed []byte) error {
+	result, err := s.db.Exec("UPDATE subscriptions SET token_hash=?,token_cipher=? WHERE id=?", hash, sealed, id)
 	if err != nil {
 		return tokenWriteError(err)
 	}
@@ -260,17 +345,18 @@ func (s *Store) DeleteEntity(kind, id string) error {
 	return e
 }
 func (s *Store) SaveSubscription(v Subscription) error {
-	_, e := s.db.Exec(`INSERT INTO subscriptions(id,label,proxy_id,credential_id,policy_id,enabled,token_hash,revision,refresh_interval,min_client) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET label=excluded.label,proxy_id=excluded.proxy_id,credential_id=excluded.credential_id,policy_id=excluded.policy_id,enabled=excluded.enabled,token_hash=excluded.token_hash,refresh_interval=excluded.refresh_interval,min_client=excluded.min_client`, v.ID, v.Label, v.ProxyID, v.CredentialID, v.PolicyID, v.Enabled, v.TokenHash, v.Revision, v.RefreshIntervalSeconds, v.MinClientVersionCode)
+	_, e := s.db.Exec(`INSERT INTO subscriptions(id,label,proxy_id,credential_id,policy_id,enabled,token_hash,revision,refresh_interval,min_client,token_cipher) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET label=excluded.label,proxy_id=excluded.proxy_id,credential_id=excluded.credential_id,policy_id=excluded.policy_id,enabled=excluded.enabled,token_hash=excluded.token_hash,token_cipher=excluded.token_cipher,refresh_interval=excluded.refresh_interval,min_client=excluded.min_client`, v.ID, v.Label, v.ProxyID, v.CredentialID, v.PolicyID, v.Enabled, v.TokenHash, v.Revision, v.RefreshIntervalSeconds, v.MinClientVersionCode, v.TokenCipher)
 	return tokenWriteError(e)
 }
 
-const subColumns = "id,label,proxy_id,credential_id,policy_id,enabled,token_hash,revision,refresh_interval,min_client"
+const subColumns = "id,label,proxy_id,credential_id,policy_id,enabled,token_hash,revision,refresh_interval,min_client,token_cipher"
 
 type scanner interface{ Scan(...any) error }
 
 func scanSub(row scanner) (Subscription, error) {
 	var v Subscription
-	e := row.Scan(&v.ID, &v.Label, &v.ProxyID, &v.CredentialID, &v.PolicyID, &v.Enabled, &v.TokenHash, &v.Revision, &v.RefreshIntervalSeconds, &v.MinClientVersionCode)
+	e := row.Scan(&v.ID, &v.Label, &v.ProxyID, &v.CredentialID, &v.PolicyID, &v.Enabled, &v.TokenHash, &v.Revision, &v.RefreshIntervalSeconds, &v.MinClientVersionCode, &v.TokenCipher)
+	v.HasSavedToken = len(v.TokenCipher) > 0
 	return v, e
 }
 func (s *Store) Subscription(id string) (Subscription, error) {

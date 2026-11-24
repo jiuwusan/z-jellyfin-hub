@@ -21,3 +21,15 @@ export function normalizeToken(input: string): string {
   throw new Error('订阅令牌格式无效')
  return token
 }
+
+export function normalizeRestoredToken(input: string): string {
+ const value=input.trim()
+ if(!value)throw new Error('请输入原订阅链接或令牌')
+ if(!value.includes('://'))return normalizeToken(value)
+ let url:URL
+ try{url=new URL(value)}catch{throw new Error('原订阅链接格式无效')}
+ if(!['https:','http:'].includes(url.protocol)||url.username||url.password||url.search
+    ||!url.pathname.endsWith('/api/v1/subscription/config')||!url.hash)
+  throw new Error('请输入完整的原订阅链接，或只填写原令牌')
+ return normalizeToken(url.hash.slice(1))
+}
