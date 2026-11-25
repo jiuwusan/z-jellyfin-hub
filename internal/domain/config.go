@@ -24,7 +24,7 @@ type Jellyfin struct {
 	Password string `json:"password"`
 }
 type Connection struct {
-	Proxy    Proxy    `json:"proxy"`
+	Proxy    *Proxy   `json:"proxy,omitempty"`
 	Jellyfin Jellyfin `json:"jellyfin"`
 }
 type Policy struct {
@@ -78,8 +78,12 @@ func (c Configuration) Validate() error {
 	if !ValidBaseURL(c.Connection.Jellyfin.BaseURL) || strings.TrimSpace(c.Connection.Jellyfin.Username) == "" || c.Connection.Jellyfin.Password == "" || len(c.Connection.Jellyfin.Password) > 1024 {
 		return ErrInvalid
 	}
-	if e := c.Connection.Proxy.Validate(); e != nil {
-		return e
+	if c.Connection.Proxy != nil {
+		if e := c.Connection.Proxy.Validate(); e != nil {
+			return e
+		}
+	} else if c.MinClientVersionCode < 72 {
+		return ErrInvalid
 	}
 	return c.Playback.Validate()
 }

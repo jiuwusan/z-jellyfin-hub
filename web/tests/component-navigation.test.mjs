@@ -13,7 +13,7 @@ function consoleHarness(fetcher){
  const modules={vue,'vue-router':{useRoute:()=>route,useRouter:()=>router},'./addresses':addresses,'./navigation':navigation}
  const source=readFileSync(new URL('../src/HubConsole.vue',import.meta.url),'utf8').match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1]
  const code=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText
- const view=new Function('require','exports','window','fetch','confirm',code+'\nreturn {starting,authenticated,csrf,busy,error,signIn,api,action,syncRoute,changePassword,password};')(
+ const view=new Function('require','exports','window','fetch','confirm',code+'\nreturn {starting,authenticated,csrf,busy,error,signIn,api,action,syncRoute,changePassword,password,editSubscription,subscriptionDraft,entities};')(
   name=>modules[name],{}, {location:{href:'https://fixture.example/custom/#/login'}},fetcher,()=>true)
  view.starting.value=false
  return {view,route}
@@ -47,4 +47,15 @@ test('logout and password changes commit their session state after navigation',a
   assert.equal(view.authenticated.value,false,operation)
   assert.equal(view.csrf.value,'',operation)
  }
+})
+
+test('subscriptions can explicitly select direct mode while editing preserves an existing proxy',()=>{
+ const {view}=consoleHarness(async()=>response([]))
+ view.entities.proxy.push({id:'fixture-proxy',label:'Proxy'})
+ view.editSubscription()
+ assert.equal(view.subscriptionDraft.value.proxyId,'')
+ view.editSubscription({id:'fixture-sub',proxyId:'fixture-proxy'})
+ assert.equal(view.subscriptionDraft.value.proxyId,'fixture-proxy')
+ const source=readFileSync(new URL('../src/HubConsole.vue',import.meta.url),'utf8')
+ assert.match(source,/<select v-model="subscriptionDraft\.proxyId"><option value="">不使用代理（直连）<\/option>/)
 })

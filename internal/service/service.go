@@ -290,14 +290,21 @@ func (s *Service) DeleteSubscription(id string) error {
 }
 func (s *Service) build(v storage.Subscription) (domain.Configuration, error) {
 	c := domain.Configuration{SchemaVersion: 2, ServerInstanceID: s.Store.InstanceID(), SubscriptionID: v.ID, Revision: v.Revision + 1, MinClientVersionCode: max(57, v.MinClientVersionCode), RefreshIntervalSeconds: v.RefreshIntervalSeconds}
-	entity, e := s.Store.Entity("proxy", v.ProxyID)
-	if e != nil {
-		return c, domain.ErrInvalid
+	if v.ProxyID == "" {
+		c.MinClientVersionCode = max(72, c.MinClientVersionCode)
+	} else {
+		entity, e := s.Store.Entity("proxy", v.ProxyID)
+		if e != nil {
+			return c, domain.ErrInvalid
+		}
+		if e = json.Unmarshal(entity.Data, &c.Connection.Proxy); e != nil {
+			return c, e
+		}
+		if c.Connection.Proxy == nil {
+			return c, domain.ErrInvalid
+		}
 	}
-	if e = json.Unmarshal(entity.Data, &c.Connection.Proxy); e != nil {
-		return c, e
-	}
-	entity, e = s.Store.Entity("policy", v.PolicyID)
+	entity, e := s.Store.Entity("policy", v.PolicyID)
 	if e != nil {
 		return c, domain.ErrInvalid
 	}
@@ -340,7 +347,9 @@ func (s *Service) Preview(id string) (Preview, error) {
 		return Preview{}, e
 	}
 	out := Preview{Configuration: c, ExpectedRevision: v.Revision, DraftDigest: fingerprint(c)}
-	out.Configuration.Connection.Proxy.Password = "********"
+	if out.Configuration.Connection.Proxy != nil {
+		out.Configuration.Connection.Proxy.Password = "********"
+	}
 	out.Configuration.Connection.Jellyfin.Password = "********"
 	return out, nil
 }
